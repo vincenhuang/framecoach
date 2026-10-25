@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="取景教練">
+<meta name="theme-color" content="#000000">
+<title>取景教練</title>
+<style>
+  :root {
+    --bg: #000;
+    --fg: #fff;
+    --muted: rgba(255,255,255,.65);
+    --glass: rgba(20,20,20,.62);
+    --chip: rgba(255,255,255,.14);
+    --accent: #ffd60a;
+    --warn: #ff9f0a;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.4 -apple-system, "PingFang TC", "Noto Sans TC", sans-serif; overflow: hidden; }
+  button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+
+  #app { position: fixed; inset: 0; display: flex; flex-direction: column;
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+  #stage { flex: 1; position: relative; display: flex; align-items: center; justify-content: center; min-height: 0; }
+  #frame { position: relative; max-width: 100%; max-height: 100%; }
+  #video, #overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #video { object-fit: cover; }
+
+  #top { position: absolute; top: 10px; left: 16px; right: 16px; display: flex; gap: 8px; align-items: flex-start; z-index: 2; }
+  #scene { background: var(--glass); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border-radius: 12px; padding: 8px 12px; flex: 1; min-width: 0; }
+  #scene b { font-size: 16px; }
+  #scene small { display: block; color: var(--muted); font-size: 12px; }
+  #gear { background: var(--glass); border-radius: 50%; width: 40px; height: 40px; font-size: 20px; flex: none; }
+  #tilt { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); background: var(--warn);
+    color: #000; font-weight: 700; padding: 8px 14px; border-radius: 99px; font-size: 14px; z-index: 2; }
+
+  #bottom { padding: 8px 16px 10px; display: flex; flex-direction: column; gap: 10px; }
+  #advice { background: var(--glass); border-radius: 12px; padding: 10px 12px; font-size: 13px; white-space: pre-wrap;
+    display: flex; gap: 8px; max-height: 30vh; overflow: auto; }
+  #advice div { flex: 1; min-width: 0; }
+  #chips { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+  #chips::-webkit-scrollbar { display: none; }
+  .chip { flex: none; width: 138px; text-align: left; background: var(--chip); border-radius: 12px; padding: 8px 10px; }
+  .chip b { display: block; font-size: 14px; }
+  .chip span { font-size: 11px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .chip.on { background: var(--accent); color: #000; }
+  .chip.on span { color: rgba(0,0,0,.7); }
+  #controls { display: flex; align-items: center; justify-content: space-between; }
+  #thumb { width: 54px; height: 54px; border-radius: 8px; background: var(--chip) center/cover; }
+  #shutter { width: 74px; height: 74px; border-radius: 50%; background: #fff; box-shadow: inset 0 0 0 3px #000, 0 0 0 3px #fff; }
+  #shutter:active { transform: scale(.94); }
+  #ai { width: 54px; display: flex; flex-direction: column; align-items: center; font-size: 11px; gap: 2px; }
+  #ai i { font-style: normal; font-size: 24px; }
+  #ai[disabled] { opacity: .5; }
+
+  .sheet { position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 10; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 16px; padding: 24px 16px; text-align: center; }
+  .sheet h1 { font-size: 28px; margin: 0; }
+  .sheet p { color: var(--muted); margin: 0; max-width: 32em; }
+  .btn { background: var(--accent); color: #000; font-weight: 700; padding: 14px 28px; border-radius: 99px; font-size: 17px; }
+  .btn.ghost { background: var(--chip); color: var(--fg); }
+  .sheet input { width: 100%; max-width: 360px; padding: 12px; border-radius: 10px; border: 1px solid var(--chip);
+    background: #111; color: var(--fg); font-size: 15px; }
+  #preview img { max-height: 60vh; border-radius: 8px; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <div id="frame">
+      <video id="video" playsinline muted autoplay></video>
+      <canvas id="overlay"></canvas>
+    </div>
+    <div id="top">
+      <div id="scene"><b>場景：分析中…</b><small>把鏡頭對準想拍的東西</small></div>
+      <button id="gear" aria-label="設定">⚙︎</button>
+    </div>
+    <div id="tilt" hidden></div>
+  </div>
+  <div id="bottom">
+    <div id="advice" hidden><div id="adviceText"></div><button id="adviceClose" aria-label="關閉">✕</button></div>
+    <div id="chips"></div>
+    <div id="controls">
+      <div id="thumb"></div>
+      <button id="shutter" aria-label="拍照"></button>
+      <button id="ai"><i>✦</i>AI 攝影師</button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="startSheet">
+  <h1>取景教練</h1>
+  <p>自動判斷畫面，給你幾種專業的取景方式。<br>選一個框，按快門，照片會依照建議裁切。</p>
+  <button class="btn" id="startBtn">開啟相機</button>
+  <p id="startMsg"></p>
+</div>
+
+<div class="sheet" id="settingsSheet" hidden>
+  <h1>設定</h1>
+  <p>「AI 攝影師」需要 Anthropic API Key（到 console.anthropic.com 申請），只會存在這支手機上。</p>
+  <input id="keyInput" type="password" placeholder="sk-ant-..." autocomplete="off">
+  <button class="btn" id="keySave">儲存</button>
+</div>
+
+<div class="sheet" id="preview" hidden>
+  <img id="previewImg" alt="拍好的照片">
+  <p>長按照片 →「加入照片」即可存到相簿</p>
+  <div style="display:flex;gap:10px">
+    <button class="btn" id="shareBtn">儲存／分享</button>
+    <button class="btn ghost" id="previewClose">繼續拍</button>
+  </div>
+</div>
+
+<script type="module">
+import { FilesetResolver, ObjectDetector, FaceDetector }
+  from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+const $ = id => document.getElementById(id);
+const video = $("video"), overlay = $("overlay"), ctx = overlay.getContext("2d");
+
+/* ---------- 場景 ---------- */
+const SCENES = {
+  portrait: ["人像", "眼睛放在上三分線，頭頂別留太多空間"],
+  food: ["美食", "試試 45° 斜拍，或手機平舉正上方俯拍"],
+  animal: ["動物", "蹲到和牠視線一樣高"],
+  plant: ["花草", "靠近一點、放低角度，讓背景單純"],
+  object: ["物品", "主體放在三分點上，背景越乾淨越好"],
+  general: ["風景／一般", "地平線放在上或下三分之一，別切在正中間"],
+};
+const FOOD = ["banana","apple","sandwich","orange","broccoli","carrot","hot dog","pizza","donut","cake","bowl","cup","wine glass","dining table"];
+const ANIMAL = ["bird","cat","dog","horse","sheep","cow","elephant","bear","zebra","giraffe"];
+const PLANT = ["potted plant","vase"];
+
+/* ---------- 狀態 ---------- */
+let objDet, faceDet;
+let suggestions = [];     // {id,title,tip,rect:{x,y,w,h}} 比例座標 0~1
+let selected = 0;         // null = 原始畫面
+let tiltDeg = null;
+let lastPhoto = null;
+let lastRun = 0;
+
+/* ---------- 啟動 ---------- */
+$("startBtn").onclick = async () => {
+  $("startMsg").textContent = "載入中…";
+  try {
+    // iOS 需要使用者點擊後才能讀取陀螺儀
+    if (window.DeviceOrientationEvent?.requestPermission) {
+      try { await DeviceOrientationEvent.requestPermission(); } catch {}
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1440 } }, audio: false });
+    video.srcObject = stream;
+    await video.play();
+    layout();
+    $("startSheet").hidden = true;
+    loadModels();
+    window.addEventListener("deviceorientation", onOrientation);
+    requestAnimationFrame(loop);
+  } catch (e) {
+    $("startMsg").textContent = "無法開啟相機：" + e.message + "。請在 Safari 設定允許相機。";
+  }
+};
+
+async function loadModels() {
+  const fs = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+  objDet = await ObjectDetector.createFromOptions(fs, {
+    baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite", delegate: "GPU" },
+    scoreThreshold: 0.35, runningMode: "VIDEO" });
+  faceDet = await FaceDetector.createFromOptions(fs, {
+    baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite", delegate: "GPU" },
+    runningMode: "VIDEO" });
+}
+
+/* 讓畫面框和相機畫面同比例 */
+function layout() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw) return;
+  const st = $("stage").getBoundingClientRect();
+  const s = Math.min(st.width / vw, st.height / vh);
+  const f = $("frame");
+  f.style.width = vw * s + "px"; f.style.height = vh * s + "px";
+  overlay.width = vw * s * devicePixelRatio; overlay.height = vh * s * devicePixelRatio;
+}
+window.addEventListener("resize", layout);
+video.addEventListener("loadedmetadata", layout);
+
+/* ---------- 水平 ---------- */
+function onOrientation(e) {
+  // 直拿手機時，gamma 是左右傾斜
+  if (e.gamma == null || Math.abs(e.beta) < 30) { tiltDeg = null; return; }
+  tiltDeg = Math.abs(e.gamma) > 2 && Math.abs(e.gamma) < 35 ? e.gamma : null;
+}
+
+/* ---------- 分析迴圈 ---------- */
+function loop(t) {
+  if (objDet && faceDet && t - lastRun > 300 && video.readyState >= 2) {
+    lastRun = t;
+    analyze(t);
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function analyze(t) {
+  const W = video.videoWidth, H = video.videoHeight;
+  const norm = b => ({ x: b.originX / W, y: b.originY / H, w: b.width / W, h: b.height / H });
+  const faces = faceDet.detectForVideo(video, t).detections.map(d => norm(d.boundingBox));
+  const objs = objDet.detectForVideo(video, t + 1).detections
+    .map(d => ({ name: d.categories[0].categoryName, score: d.categories[0].score, box: norm(d.boundingBox) }));
+
+  let scene = "general", subject = null;
+  if (faces.length) {
+    scene = "portrait";
+    const f = union(faces);
+    subject = clamp01({ x: f.x - f.w * .3, y: f.y - f.h * .2, w: f.w * 1.6, h: f.h * 2.6 }); // 臉加肩膀
+  } else if (objs.length) {
+    const main = objs.filter(o => o.name !== "dining table").sort((a, b) => area(b.box) * b.score - area(a.box) * a.score)[0] || objs[0];
+    scene = FOOD.includes(main.name) ? "food" : ANIMAL.includes(main.name) ? "animal"
+          : PLANT.includes(main.name) ? "plant" : main.name === "person" ? "portrait" : "object";
+    const same = objs.filter(o => o.name === main.name).map(o => o.box);
+    subject = union(same);
+  }
+
+  const [name, tip] = SCENES[scene];
+  $("scene").innerHTML = `<b>場景：${name}</b><small>${tip}</small>`;
+  updateSuggestions(subject ? suggest(subject, scene) : []);
+}
+
+/* ---------- 構圖建議 ---------- */
+const THIRDS = [[1/3,1/3],[2/3,1/3],[1/3,2/3],[2/3,2/3]], CENTER = [[.5,.5]];
+
+function suggest(sub, scene) {
+  const out = [];
+  const a = best(sub, [.95,.85,.75], THIRDS, .12);
+  if (a) out.push({ id: 0, title: "三分法", tip: "主體放在三分點，帶到周圍環境", rect: a });
+  const b = best(sub, [.9,.8,.7,.6], CENTER, .2);
+  if (b) out.push({ id: 1, title: "置中對稱", tip: "主體放正中間，畫面穩定有力", rect: b });
+  const c = best(sub, [.4,.5,.6,.7], [...THIRDS, ...CENTER], .35);
+  if (c) out.push({ id: 2, title: scene === "portrait" ? "人像特寫" : "靠近特寫",
+    tip: scene === "portrait" ? "眼睛對齊上三分線，背景越簡單越好" : "靠近主體，去掉雜亂的背景", rect: c });
+  return out.filter((s, i) => !out.slice(0, i).some(o => iou(o.rect, s.rect) > .85));
+}
+
+function best(sub, sizes, targets, idealFill) {
+  const cx = sub.x + sub.w / 2, cy = sub.y + sub.h / 2;
+  let bestR = null, bestS = -Infinity;
+  for (const s of sizes) for (const [tx, ty] of targets) {
+    const x = Math.min(Math.max(cx - tx * s, 0), 1 - s), y = Math.min(Math.max(cy - ty * s, 0), 1 - s);
+    const r = { x, y, w: s, h: s };
+    const inter = intersect(r, sub);
+    if (!inter || area(inter) < area(sub) * .92) continue;  // 主體要幾乎完整入鏡
+    const err = Math.hypot((cx - x) / s - tx, (cy - y) / s - ty);
+    const score = -err * 3 - Math.abs(area(sub) / (s * s) - idealFill);
+    if (score > bestS) { bestS = score; bestR = r; }
+  }
+  return bestR;
+}
+
+/* 平滑移動，避免框框亂跳 */
+function updateSuggestions(next) {
+  suggestions = next.map(n => {
+    const old = suggestions.find(o => o.id === n.id);
+    if (!old) return n;
+    const k = .4, r = {};
+    for (const p of ["x","y","w","h"]) r[p] = old.rect[p] + (n.rect[p] - old.rect[p]) * k;
+    return { ...n, rect: r };
+  });
+  if (selected !== null && !suggestions.some(s => s.id === selected)) selected = suggestions[0]?.id ?? null;
+  renderChips();
+}
+
+/* ---------- 畫面 ---------- */
+function draw() {
+  const W = overlay.width, H = overlay.height, d = devicePixelRatio;
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = "rgba(255,255,255,.25)"; ctx.lineWidth = d * .7;
+  ctx.beginPath();
+  for (const i of [1, 2]) { ctx.moveTo(W * i / 3, 0); ctx.lineTo(W * i / 3, H); ctx.moveTo(0, H * i / 3); ctx.lineTo(W, H * i / 3); }
+  ctx.stroke();
+
+  const sel = suggestions.find(s => s.id === selected);
+  if (sel) {
+    const r = px(sel.rect);
+    ctx.fillStyle = "rgba(0,0,0,.45)";
+    ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.rect(r.x, r.y + r.h, r.w, -r.h); ctx.fill("evenodd");
+  }
+  for (const s of suggestions) {
+    const r = px(s.rect), on = s.id === selected;
+    ctx.setLineDash(on ? [] : [6 * d, 4 * d]);
+    ctx.strokeStyle = on ? "#ffd60a" : "rgba(255,255,255,.55)";
+    ctx.lineWidth = (on ? 2.5 : 1) * d;
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+  }
+  ctx.setLineDash([]);
+
+  const tilt = $("tilt");
+  if (tiltDeg !== null) { tilt.hidden = false; tilt.textContent = `手機歪了 ${Math.abs(Math.round(tiltDeg))}°，請轉正`; }
+  else tilt.hidden = true;
+}
+const px = r => ({ x: r.x * overlay.width, y: r.y * overlay.height, w: r.w * overlay.width, h: r.h * overlay.height });
+
+function renderChips() {
+  const items = [{ id: null, title: "原始畫面", tip: "不裁切" }, ...suggestions];
+  const html = items.map(s =>
+    `<button class="chip${s.id === selected ? " on" : ""}" data-id="${s.id}"><b>${s.title}</b><span>${s.tip}</span></button>`).join("");
+  if ($("chips").innerHTML !== html) $("chips").innerHTML = html;
+}
+$("chips").onclick = e => {
+  const b = e.target.closest(".chip"); if (!b) return;
+  selected = b.dataset.id === "null" ? null : +b.dataset.id;
+  renderChips();
+};
+
+/* ---------- 拍照 ---------- */
+$("shutter").onclick = () => {
+  const W = video.videoWidth, H = video.videoHeight;
+  const r = suggestions.find(s => s.id === selected)?.rect ?? { x: 0, y: 0, w: 1, h: 1 };
+  const c = document.createElement("canvas");
+  c.width = Math.round(r.w * W); c.height = Math.round(r.h * H);
+  c.getContext("2d").drawImage(video, r.x * W, r.y * H, r.w * W, r.h * H, 0, 0, c.width, c.height);
+  c.toBlob(blob => {
+    lastPhoto = blob;
+    const url = URL.createObjectURL(blob);
+    $("thumb").style.backgroundImage = `url(${url})`;
+    $("previewImg").src = url;
+    $("preview").hidden = false;
+  }, "image/jpeg", .92);
+};
+$("thumb").onclick = () => { if (lastPhoto) $("preview").hidden = false; };
+$("previewClose").onclick = () => $("preview").hidden = true;
+$("shareBtn").onclick = async () => {
+  const file = new File([lastPhoto], `取景教練-${Date.now()}.jpg`, { type: "image/jpeg" });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); } catch {}
+  }
+};
+
+/* ---------- AI 攝影師 ---------- */
+const getKey = () => { try { return localStorage.getItem("anthropicKey") || ""; } catch { return ""; } };
+$("gear").onclick = () => { $("keyInput").value = getKey(); $("settingsSheet").hidden = false; };
+$("keySave").onclick = () => {
+  try { localStorage.setItem("anthropicKey", $("keyInput").value.trim()); } catch {}
+  $("settingsSheet").hidden = true;
+};
+$("adviceClose").onclick = () => $("advice").hidden = true;
+
+$("ai").onclick = async () => {
+  const key = getKey();
+  if (!key) { $("gear").click(); return; }
+  const W = video.videoWidth, H = video.videoHeight, s = Math.min(1, 1024 / Math.max(W, H));
+  const c = document.createElement("canvas");
+  c.width = W * s; c.height = H * s;
+  c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
+  const b64 = c.toDataURL("image/jpeg", .7).split(",")[1];
+
+  $("ai").disabled = true;
+  $("advice").hidden = false; $("adviceText").textContent = "AI 攝影師正在看你的畫面…";
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json",
+                 "anthropic-dangerous-direct-browser-access": "true" },
+      body: JSON.stringify({
+        model: "claude-sonnet-5-5", max_tokens: 500,
+        messages: [{ role: "user", content: [
+          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } },
+          { type: "text", text: "你是專業攝影師，正在指導一位手機拍照新手。這是他目前相機的畫面。請用繁體中文給出 3 個具體、馬上能做的取景建議，每個建議一行，格式：「名稱：怎麼做（往哪移、蹲低或舉高、橫拍或直拍、用什麼構圖）」，每行不超過 40 字，不要其他說明。" },
+        ] }],
+      }),
+    });
+    const j = await res.json();
+    $("adviceText").textContent = res.ok ? j.content.map(x => x.text || "").join("") : "⚠️ " + (j.error?.message || res.status);
+  } catch (e) {
+    $("adviceText").textContent = "⚠️ 連線失敗：" + e.message;
+  }
+  $("ai").disabled = false;
+};
+
+/* ---------- 工具 ---------- */
+function area(r) { return r.w * r.h; }
+function union(rs) {
+  const x1 = Math.min(...rs.map(r => r.x)), y1 = Math.min(...rs.map(r => r.y));
+  const x2 = Math.max(...rs.map(r => r.x + r.w)), y2 = Math.max(...rs.map(r => r.y + r.h));
+  return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+}
+function intersect(a, b) {
+  const x = Math.max(a.x, b.x), y = Math.max(a.y, b.y);
+  const w = Math.min(a.x + a.w, b.x + b.w) - x, h = Math.min(a.y + a.h, b.y + b.h) - y;
+  return w > 0 && h > 0 ? { x, y, w, h } : null;
+}
+function iou(a, b) { const i = intersect(a, b); return i ? area(i) / (area(a) + area(b) - area(i)) : 0; }
+function clamp01(r) { return intersect(r, { x: 0, y: 0, w: 1, h: 1 }); }
+</script>
+</body>
+</html>
