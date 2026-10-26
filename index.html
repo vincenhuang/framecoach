@@ -184,7 +184,8 @@ let allCands = [], mainCand = null, lock = null, cue = null;
 let feat = null;                     // 最近一次的畫面特徵
 let ranked = [];                     // 符合的範本（分數高到低）
 let active = null;                   // 目前套用的範本
-let manualId = null;                 // 使用者手動指定的範本
+let manualId = null;
+let pendingCue = null;                 // 使用者手動指定的範本
 let pendingId = null, pendingCount = 0;
 let filterId = null;                 // null = 跟著範本推薦
 let showFilters = false;
@@ -257,7 +258,7 @@ let lastDims = "";
 function loop(t) {
   const dims = `${video.videoWidth}x${video.videoHeight}x${innerWidth}x${innerHeight}`;
   if (dims !== lastDims) { lastDims = dims; layout(); }
-  if (objDet && faceDet && t - lastRun > 300 && video.readyState >= 2) {
+  if (objDet && faceDet && t - lastRun > 500 && video.readyState >= 2) {
     lastRun = t;
     analyze(t);
   }
@@ -296,7 +297,10 @@ function analyze(t) {
   }
   if (!main && cands.length) {
     const rank = c => Math.sqrt(area(c.box)) * c.score * (1.3 - dist(center(c.box), { x: .5, y: .5 }));
-    main = cands.reduce((a, b) => rank(b) > rank(a) ? b : a);
+    const best = cands.reduce((a, b) => rank(b) > rank(a) ? b : a);
+    const prev = mainCand && cands.filter(c => !!c.face === !!mainCand.face && c.name === mainCand.name)
+      .sort((a, b) => dist(center(a.box), center(mainCand.box)) - dist(center(b.box), center(mainCand.box)))[0];
+    main = prev && dist(center(prev.box), center(mainCand.box)) < .2 && rank(best) < rank(prev) * 1.4 ? prev : best;
   }
   mainCand = main;
   allCands = cands;
@@ -325,28 +329,39 @@ function analyze(t) {
   };
 
   chooseTemplate();
-  cue = computeCue(feat, active);
+  const next = computeCue(feat, active);
+  if (!cue || next.t === cue.t || next.t === pendingCue) cue = next;
+  pendingCue = next.t;
   renderTop();
 }
 
-/* ---------- 範本選擇 ---------- */
+/* ---------- 範本選擇（穩定版） ---------- */
+const ema = {};                 // 每個範本的平滑分數
+let activeSince = 0;            // 目前範本從什麼時候開始
 function chooseTemplate() {
-  ranked = rankTemplates(feat);
-  let next;
+  const raw = rankTemplates(feat), now = performance.now();
+  for (const t of TEMPLATES) {
+    const sc = raw.find(r => r.t === t)?.score || 0;
+    ema[t.id] = (ema[t.id] ?? sc) * .8 + sc * .2;          // 慢慢跟上，不會因為一兩格誤判就變
+  }
+  ranked = TEMPLATES.map(t => ({ t, score: ema[t.id] })).filter(r => r.score > .2).sort((a, b) => b.score - a.score);
+
+  let next = active;
   if (manualId) next = TEMPLATES.find(t => t.id === manualId);
   else {
     const top = ranked[0]?.t || null;
-    // 避免範本一直跳：新範本要連續勝出 3 次（約 1 秒）才切換
-    if (!active || !top || top === active || !ranked.some(r => r.t === active)) next = top;
-    else {
+    const cur = active ? ema[active.id] : 0;
+    if (!active) next = top;
+    else if (cur < .15) next = top;                          // 目前的範本已經完全不符合
+    else if (top && top !== active && now - activeSince > 4000 && ema[top.id] > cur + .15) {
       if (pendingId === top.id) pendingCount++; else { pendingId = top.id; pendingCount = 1; }
-      next = pendingCount >= 3 ? top : active;
-    }
+      if (pendingCount >= 5) next = top;                     // 明顯勝出且持續約 2.5 秒才換
+    } else pendingId = null;
   }
   if (next !== active) {
     active = next;
+    activeSince = now;
     pendingId = null;
-    if (active?.zoom && hwZoom) setZoom(active.zoom);    // 自動切換焦段
     if (!filterId) flashFilterName();                     // 跟著範本換推薦濾鏡
   }
   renderChips();
@@ -358,14 +373,17 @@ function renderTop() {
     return;
   }
   const mode = manualId ? "指定" : "自動";
-  $("scene").innerHTML = `<b>${active.name}</b><small>${mode}・點主角可鎖定・雙指縮放</small>` +
+  const html = `<b>${active.name}</b><small>${mode}・點主角可鎖定・雙指縮放</small>` +
     `<span class="steps">${active.steps.map((s, i) => `${i + 1}. ${s}`).join("　")}</span>`;
+  if ($("scene").innerHTML !== html) $("scene").innerHTML = html;
 }
 
 function renderChips() {
   if (showFilters) return renderFilterChips();
-  const shown = ranked.slice(0, 4).map(r => r.t);
-  if (active && !shown.includes(active)) shown.unshift(active);
+  // 顯示前幾名，但依固定順序排列，選項才不會一直跳位置
+  const pick = new Set(ranked.slice(0, 4).map(r => r.t));
+  if (active) pick.add(active);
+  const shown = TEMPLATES.filter(t => pick.has(t));
   const items = [{ id: "", short: "自動", tip: manualId ? "回到自動判斷" : "自動判斷中" }, ...shown.map(t => ({ id: t.id, short: t.short, tip: t.steps[0] }))];
   const html = items.map(s => {
     const on = s.id === "" ? !manualId : s.id === manualId || (!manualId && active?.id === s.id);
@@ -424,6 +442,8 @@ $("stage").addEventListener("touchend", e => {
 });
 function pickTemplate(id) {
   manualId = id;
+  const t = TEMPLATES.find(x => x.id === id);
+  if (t?.zoom && hwZoom) setZoom(t.zoom);
   if (feat) { chooseTemplate(); cue = computeCue(feat, active); renderTop(); }
 }
 
