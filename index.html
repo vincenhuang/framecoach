@@ -57,6 +57,22 @@
     background: var(--warn); color: #000; font-weight: 800; font-size: 22px; padding: 10px 22px;
     border-radius: 99px; white-space: nowrap; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
   #cue.ok { background: #30d158; }
+  /* 水平儀（仿原廠相機）：放在 stage 上，不會跟著數位放大 */
+  #level, #flatLevel { position: absolute; left: 50%; top: 50%; z-index: 2; pointer-events: none; }
+  #level { width: 200px; height: 0; transform: translate(-50%, -50%); }
+  #level i { position: absolute; top: -1px; height: 2px; background: #fff; border-radius: 1px;
+    box-shadow: 0 0 3px rgba(0,0,0,.5); transition: background .15s; }
+  #level .l { left: 0; width: 44px; }
+  #level .r { right: 0; width: 44px; }
+  #level .c { left: 56px; width: 88px; transform-origin: 50% 50%; }
+  #level.ok i { background: var(--accent); }
+  #level.ok .c { left: 0; width: 200px; }
+  #flatLevel { width: 0; height: 0; }
+  #flatLevel i { position: absolute; width: 28px; height: 28px; margin: -14px 0 0 -14px; }
+  #flatLevel i::before, #flatLevel i::after { content: ""; position: absolute; background: #fff; box-shadow: 0 0 3px rgba(0,0,0,.5); }
+  #flatLevel i::before { left: 13px; top: 0; width: 2px; height: 28px; }
+  #flatLevel i::after { top: 13px; left: 0; height: 2px; width: 28px; }
+  #flatLevel .mov::before, #flatLevel .mov::after, #flatLevel.ok i::before, #flatLevel.ok i::after { background: var(--accent); }
 
   #bottom { padding: 8px 16px 10px; display: flex; flex-direction: column; gap: 10px; }
   #chips { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
@@ -124,6 +140,8 @@
     <div id="top">
       <div id="scene"><b>範本：分析中…</b><small>把鏡頭對準想拍的東西</small></div>
     </div>
+    <div id="level" hidden><i class="l"></i><i class="c"></i><i class="r"></i></div>
+    <div id="flatLevel" hidden><i class="fix"></i><i class="mov"></i></div>
     <div id="cue" hidden></div>
     <div id="filterName" style="opacity:0"></div>
     <button id="zoom" hidden>1.0×</button>
@@ -242,10 +260,20 @@ window.addEventListener("resize", layout);
 video.addEventListener("loadedmetadata", layout);
 
 /* ---------- 水平與手機姿勢 ---------- */
+// iPhone 的重力數值正負號和規格相反，其他手機要反過來
+const SIGN = /iPhone|iPad|iPod/.test(navigator.userAgent) ? 1 : -1;
+let rollDeg = null, flatOffset = null;
 function onMotion(e) {
   const g = e.accelerationIncludingGravity;
   if (!g || g.x == null) return;
   gravity = g;
+  if (Math.abs(g.z) > 8) {           // 平放：用 x、y 算出前後左右偏多少
+    rollDeg = null;
+    flatOffset = { x: SIGN * g.x / 9.8, y: -SIGN * g.y / 9.8 };
+  } else {
+    flatOffset = null;
+    rollDeg = Math.abs(g.z) > Math.hypot(g.x, g.y) ? null : SIGN * Math.atan2(g.x, Math.abs(g.y)) * 180 / Math.PI;
+  }
   // 手機接近平放時不判斷左右傾斜（例如俯拍美食）
   if (Math.abs(g.z) > Math.hypot(g.x, g.y)) { tiltDeg = null; return; }
   const deg = Math.atan2(g.x, Math.abs(g.y)) * 180 / Math.PI;
@@ -469,7 +497,7 @@ function moveCue(cur, tgt, tol = .06) {
 }
 
 function computeCue(f, tpl) {
-  if (tiltDeg !== null && !f.flat) return { t: `↻ 轉正 ${Math.abs(Math.round(tiltDeg))}°` };
+  if (tiltDeg !== null && !f.flat) return { t: "↻ 對齊水平線" };
   if (f.face && (f.face.box.x < .01 || f.face.box.x + f.face.box.w > .99 || f.face.box.y < .01)) return { t: "↙ 退後一點" };
   if (tpl) {
     const g = tpl.target(f);
@@ -525,6 +553,21 @@ function draw() {
     ctx.fillStyle = "#ffd60a"; ctx.fillRect(r.x, ty, tw, 20 * d);
     ctx.fillStyle = "#000"; ctx.fillText(label, r.x + 6 * d, ty + 15 * d);
   }
+  // 水平儀
+  const lv = $("level"), fl = $("flatLevel");
+  lv.hidden = rollDeg == null || Math.abs(rollDeg) > 40;
+  if (!lv.hidden) {
+    const ok = Math.abs(rollDeg) < 1;
+    lv.classList.toggle("ok", ok);
+    lv.querySelector(".c").style.transform = ok ? "" : `rotate(${-rollDeg}deg)`;
+  }
+  fl.hidden = !flatOffset;
+  if (flatOffset) {
+    const k = 160, dx = Math.max(-80, Math.min(80, flatOffset.x * k)), dy = Math.max(-80, Math.min(80, flatOffset.y * k));
+    fl.classList.toggle("ok", Math.hypot(dx, dy) < 4);
+    fl.querySelector(".mov").style.transform = `translate(${dx}px, ${dy}px)`;
+  }
+
   const cueEl = $("cue");
   if (cue) { cueEl.hidden = false; if (cueEl.textContent !== cue.t) cueEl.textContent = cue.t; cueEl.classList.toggle("ok", !!cue.ok); }
 }
