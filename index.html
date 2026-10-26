@@ -287,7 +287,7 @@ let lastDims = "";
 function loop(t) {
   const dims = `${video.videoWidth}x${video.videoHeight}x${innerWidth}x${innerHeight}`;
   if (dims !== lastDims) { lastDims = dims; layout(); }
-  if (objDet && faceDet && t - lastRun > 500 && video.readyState >= 2) {
+  if (objDet && faceDet && t - lastRun > Math.max(350, analyzeMs * 4) && video.readyState >= 2) {
     lastRun = t;
     try { analyze(t); } catch (e) { console.warn(e); }   // 分析出錯也不能讓畫面停住
   }
@@ -298,11 +298,22 @@ function loop(t) {
   requestAnimationFrame(loop);
 }
 
+// 辨識用的小圖：模型內部本來就會縮小，直接給小圖省下大量運算
+const small = document.createElement("canvas");
+const sctx2 = small.getContext("2d");
+let lastFaceDets = [], lastObjDets = [], tick = 0;
+let analyzeMs = 0;                     // 最近一次分析花了多久，用來自動調整頻率
+
 function analyze(t) {
-  const W = video.videoWidth, H = video.videoHeight;
+  const t0 = performance.now();
+  const W = small.width = 384, H = small.height = Math.round(384 * video.videoHeight / video.videoWidth);
+  sctx2.drawImage(video, 0, 0, W, H);
+  // 人臉和物品輪流辨識，一次只跑一個，不會長時間卡住畫面
+  if (tick++ % 2 === 0) lastFaceDets = faceDet.detectForVideo(small, t).detections;
+  else lastObjDets = objDet.detectForVideo(small, t).detections;
   const norm = b => ({ x: b.originX / W, y: b.originY / H, w: b.width / W, h: b.height / H });
-  const faceDets = faceDet.detectForVideo(video, t).detections;
-  const objs = objDet.detectForVideo(video, t + 1).detections
+  const faceDets = lastFaceDets;
+  const objs = lastObjDets
     .map(d => ({ name: d.categories[0].categoryName, score: d.categories[0].score, box: norm(d.boundingBox) }));
 
   // 候選主角：每張臉（含肩膀）＋每個物件（已有臉的人不重複）
@@ -360,6 +371,7 @@ function analyze(t) {
   };
 
   chooseTemplate();
+  analyzeMs = performance.now() - t0;
   const next = computeCue(feat, active);
   if (!cue || next.t === cue.t || next.t === pendingCue) cue = next;
   pendingCue = next.t;
