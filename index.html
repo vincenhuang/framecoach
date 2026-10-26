@@ -37,14 +37,12 @@
     border-radius: 12px; padding: 8px 12px; flex: 1; min-width: 0; }
   #scene b { font-size: 16px; }
   #scene small { display: block; color: var(--muted); font-size: 12px; }
-  #tilt { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); background: var(--warn);
-    color: #000; font-weight: 700; padding: 8px 14px; border-radius: 99px; font-size: 14px; z-index: 2; }
+  #cue { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 3;
+    background: var(--warn); color: #000; font-weight: 800; font-size: 22px; padding: 10px 22px;
+    border-radius: 99px; white-space: nowrap; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+  #cue.ok { background: #30d158; }
 
   #bottom { padding: 8px 16px 10px; display: flex; flex-direction: column; gap: 10px; }
-  #advice { position: absolute; left: 16px; right: 16px; bottom: 10px; z-index: 3;
-    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); background: var(--glass); border-radius: 12px; padding: 10px 12px; font-size: 13px; white-space: pre-wrap;
-    display: flex; gap: 8px; max-height: 30vh; overflow: auto; }
-  #advice div { flex: 1; min-width: 0; }
   #chips { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
   #chips::-webkit-scrollbar { display: none; }
   .chip { flex: none; width: 138px; text-align: left; background: var(--chip); border-radius: 12px; padding: 8px 10px; }
@@ -56,9 +54,6 @@
   #thumb { width: 54px; height: 54px; border-radius: 8px; background: var(--chip) center/cover; }
   #shutter { width: 74px; height: 74px; border-radius: 50%; background: #fff; box-shadow: inset 0 0 0 3px #000, 0 0 0 3px #fff; }
   #shutter:active { transform: scale(.94); }
-  #ai { width: 54px; display: flex; flex-direction: column; align-items: center; font-size: 11px; gap: 2px; }
-  #ai i { font-style: normal; font-size: 24px; }
-  #ai[disabled] { opacity: .5; }
 
   .sheet { position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 10; display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 16px; padding: 24px 16px; text-align: center; }
@@ -82,15 +77,14 @@
     <div id="top">
       <div id="scene"><b>場景：分析中…</b><small>把鏡頭對準想拍的東西</small></div>
     </div>
-    <div id="tilt" hidden></div>
-    <div id="advice" hidden><div id="adviceText"></div><button id="adviceClose" aria-label="關閉">✕</button></div>
+    <div id="cue" hidden></div>
   </div>
   <div id="bottom">
     <div id="chips"></div>
     <div id="controls">
       <div id="thumb"></div>
       <button id="shutter" aria-label="拍照"></button>
-      <button id="ai"><i>✦</i>構圖檢查</button>
+      <div style="width:54px"></div>
     </div>
   </div>
 </div>
@@ -140,6 +134,7 @@ let lastPhoto = null;
 let lastRun = 0;
 let lastSubject = null;
 let lastFace = null;
+let allCands = [], mainCand = null, pin = null, cue = null;
 
 /* ---------- 啟動 ---------- */
 $("startBtn").onclick = async () => {
@@ -210,43 +205,80 @@ function loop(t) {
   requestAnimationFrame(loop);
 }
 
+const NAMES = { person: "人", dog: "狗", cat: "貓", bird: "鳥", cup: "杯子", bowl: "碗", cake: "蛋糕",
+  pizza: "披薩", "potted plant": "盆栽", vase: "花瓶", car: "車", bicycle: "腳踏車", book: "書", "cell phone": "手機",
+  bottle: "瓶子", "wine glass": "酒杯", sandwich: "三明治", donut: "甜甜圈", chair: "椅子", bench: "長椅" };
+
 function analyze(t) {
   const W = video.videoWidth, H = video.videoHeight;
   const norm = b => ({ x: b.originX / W, y: b.originY / H, w: b.width / W, h: b.height / H });
   const faceDets = faceDet.detectForVideo(video, t).detections;
-  const faces = faceDets.map(d => norm(d.boundingBox));
-  // 最大的那張臉：臉框 + 眼睛、鼻子位置（比例座標）
-  lastFace = faceDets.length ? (() => {
-    const d = faceDets.reduce((a, b) => b.boundingBox.width > a.boundingBox.width ? b : a);
-    const k = d.keypoints || [];
-    return { box: norm(d.boundingBox), eyes: k.slice(0, 2), nose: k[2] };
-  })() : null;
   const objs = objDet.detectForVideo(video, t + 1).detections
     .map(d => ({ name: d.categories[0].categoryName, score: d.categories[0].score, box: norm(d.boundingBox) }));
 
-  let scene = "general", subject = null;
-  if (faces.length) {
-    scene = "portrait";
-    const f = union(faces);
-    subject = clamp01({ x: f.x - f.w * .3, y: f.y - f.h * .2, w: f.w * 1.6, h: f.h * 2.6 }); // 臉加肩膀
-  } else if (objs.length) {
-    const main = objs.filter(o => o.name !== "dining table").sort((a, b) => area(b.box) * b.score - area(a.box) * a.score)[0] || objs[0];
-    scene = FOOD.includes(main.name) ? "food" : ANIMAL.includes(main.name) ? "animal"
-          : PLANT.includes(main.name) ? "plant" : main.name === "person" ? "portrait" : "object";
-    const same = objs.filter(o => o.name === main.name).map(o => o.box);
-    subject = union(same);
+  // 候選主角：每張臉（含肩膀）＋每個物件（已有臉的人不重複）
+  const cands = faceDets.map(d => {
+    const f = norm(d.boundingBox), k = d.keypoints || [];
+    return { name: "person", box: clamp01({ x: f.x - f.w * .3, y: f.y - f.h * .2, w: f.w * 1.6, h: f.h * 2.6 }),
+             face: { box: f, eyes: k.slice(0, 2), nose: k[2] }, score: 1.5 };
+  });
+  for (const o of objs) {
+    if (o.name === "dining table") continue;
+    if (o.name === "person" && cands.some(c => c.face && contains(o.box, center(c.face.box)))) continue;
+    cands.push(o);
   }
 
-  lastSubject = subject;
-  let list = subject ? suggest(subject, scene) : [];
-  if (!list.length) {
-    const p = analyzePixels();
-    list = landscapeSuggest(p);
-    if (!subject) { scene = "general"; lastSubject = p.subject; }
+  // 選主角：使用者點過的優先（持續追蹤），否則選又大又靠近中央的
+  let main = null;
+  if (pin && cands.length) {
+    main = cands.find(c => contains(c.box, pin)) ||
+      cands.reduce((a, b) => dist(center(b.box), pin) < dist(center(a.box), pin) ? b : a);
+    if (dist(center(main.box), pin) > .35) main = null; else pin = center(main.box);
   }
+  if (!main && cands.length) {
+    const rank = c => Math.sqrt(area(c.box)) * c.score * (1.3 - dist(center(c.box), { x: .5, y: .5 }));
+    main = cands.reduce((a, b) => rank(b) > rank(a) ? b : a);
+  }
+  mainCand = main;
+  allCands = cands;
+  lastFace = main?.face || null;
+
+  let scene = "general";
+  if (main) scene = main.face || main.name === "person" ? "portrait" : FOOD.includes(main.name) ? "food"
+    : ANIMAL.includes(main.name) ? "animal" : PLANT.includes(main.name) ? "plant" : "object";
+
+  const p = analyzePixels();
+  let list = main ? suggest(main.box, scene) : [];
+  if (!list.length) list = landscapeSuggest(p);
+  lastSubject = main?.box || p.subject;
+
   const [name, tip] = SCENES[scene];
-  $("scene").innerHTML = `<b>場景：${name}</b><small>${tip}</small>`;
+  $("scene").innerHTML = `<b>場景：${name}</b><small>${tip}・點畫面可換主角</small>`;
   updateSuggestions(list);
+  cue = computeCue(p);
+}
+
+/* 一次只給一個最重要的提示 */
+function computeCue(p) {
+  if (tiltDeg !== null) return { t: `↻ 轉正 ${Math.abs(Math.round(tiltDeg))}°` };
+  const f = lastFace?.box;
+  if (f && (f.x < .01 || f.x + f.w > .99 || f.y < .01 || f.y + f.h > .99)) return { t: "↙ 退後一點" };
+  const sel = suggestions.find(s => s.id === selected);
+  if (sel) {
+    const dx = sel.rect.x + sel.rect.w / 2 - .5, dy = sel.rect.y + sel.rect.h / 2 - .5;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) > .07)
+      return Math.abs(dx) > Math.abs(dy) ? { t: dx > 0 ? "→ 往右移" : "← 往左移" } : { t: dy > 0 ? "↓ 往下移" : "↑ 往上移" };
+    if (sel.rect.w < .8) return { t: "⊕ 靠近一點" };
+  } else if (lastFace?.eyes.length === 2) {
+    const ey = (lastFace.eyes[0].y + lastFace.eyes[1].y) / 2;
+    if (ey > 1/3 + .08) return { t: "↓ 手機往下" };
+    if (ey < 1/3 - .08) return { t: "↑ 手機往上" };
+  }
+  if (lastSubject && area(lastSubject) < .03) return { t: "⊕ 靠近一點" };
+  if (!mainCand && p.horizon != null && p.horizon > .42 && p.horizon < .58) return { t: "↕ 地平線別放中間" };
+  if (p.backlit) return { t: "☀ 逆光，換個方向" };
+  if (p.mean < .22) return { t: "☾ 太暗了" };
+  return { t: "✓ 可以拍了", ok: true };
 }
 
 /* ---------- 構圖建議 ---------- */
@@ -316,9 +348,25 @@ function draw() {
   }
   ctx.setLineDash([]);
 
-  const tilt = $("tilt");
-  if (tiltDeg !== null) { tilt.hidden = false; tilt.textContent = `手機歪了 ${Math.abs(Math.round(tiltDeg))}°，請轉正`; }
-  else tilt.hidden = true;
+  // 其他可選的物品：淡淡的細框，點了就換成主角
+  ctx.strokeStyle = "rgba(255,255,255,.45)"; ctx.lineWidth = 1 * d; ctx.setLineDash([3 * d, 3 * d]);
+  for (const c of allCands) if (c !== mainCand) { const r = px(c.face ? c.face.box : c.box); ctx.strokeRect(r.x, r.y, r.w, r.h); }
+  ctx.setLineDash([]);
+  if (mainCand) {
+    const r = px(mainCand.face ? mainCand.face.box : mainCand.box), L = Math.min(r.w, r.h) * .25;
+    ctx.strokeStyle = "#ffd60a"; ctx.lineWidth = 3 * d; ctx.beginPath();
+    for (const [cx, cy, sx, sy] of [[r.x, r.y, 1, 1], [r.x + r.w, r.y, -1, 1], [r.x, r.y + r.h, 1, -1], [r.x + r.w, r.y + r.h, -1, -1]]) {
+      ctx.moveTo(cx, cy + sy * L); ctx.lineTo(cx, cy); ctx.lineTo(cx + sx * L, cy);
+    }
+    ctx.stroke();
+    const label = "主角・" + (mainCand.face ? "人" : NAMES[mainCand.name] || mainCand.name);
+    ctx.font = `700 ${13 * d}px -apple-system, sans-serif`;
+    const tw = ctx.measureText(label).width + 12 * d, ty = Math.max(r.y - 24 * d, 0);
+    ctx.fillStyle = "#ffd60a"; ctx.fillRect(r.x, ty, tw, 20 * d);
+    ctx.fillStyle = "#000"; ctx.fillText(label, r.x + 6 * d, ty + 15 * d);
+  }
+  const cueEl = $("cue");
+  if (cue) { cueEl.hidden = false; if (cueEl.textContent !== cue.t) cueEl.textContent = cue.t; cueEl.classList.toggle("ok", !!cue.ok); }
 }
 const px = r => ({ x: r.x * overlay.width, y: r.y * overlay.height, w: r.w * overlay.width, h: r.h * overlay.height });
 
@@ -333,6 +381,13 @@ $("chips").onclick = e => {
   selected = b.dataset.id === "null" ? null : +b.dataset.id;
   renderChips();
 };
+
+/* ---------- 點畫面換主角 ---------- */
+overlay.addEventListener("click", e => {
+  const b = overlay.getBoundingClientRect();
+  const pt = { x: (e.clientX - b.left) / b.width, y: (e.clientY - b.top) / b.height };
+  pin = mainCand && contains(mainCand.box, pt) ? null : pt;   // 點目前主角 = 恢復自動
+});
 
 /* ---------- 拍照 ---------- */
 $("shutter").onclick = () => {
@@ -423,46 +478,12 @@ function landscapeSuggest(p) {
   return out.filter((x, i) => !out.slice(0, i).some(o => iou(o.rect, x.rect) > .85));
 }
 
-/* ---------- 構圖檢查：免費的文字建議 ---------- */
-$("ai").onclick = () => {
-  if (video.readyState < 2) return;
-  const p = analyzePixels(), tips = [];
-  if (tiltDeg !== null) tips.push(`📐 手機歪了 ${Math.abs(Math.round(tiltDeg))}°，先把手機轉正`);
-  if (p.horizon != null && p.horizon > .42 && p.horizon < .58) tips.push("🌅 地平線切在正中間，手機往上或往下移，把它放到三分線");
-  if (lastFace) {
-    const f = lastFace.box;
-    if (f.x < .01 || f.x + f.w > .99 || f.y < .01 || f.y + f.h > .99) tips.push("✂️ 臉被畫面邊緣切到，往後退一步");
-    if (lastFace.eyes.length === 2) {
-      const ey = (lastFace.eyes[0].y + lastFace.eyes[1].y) / 2;
-      if (Math.abs(ey - 1/3) < .07) tips.push("👁️ 眼睛在上三分線上 ✓");
-      else if (ey > 1/3) tips.push("👁️ 眼睛太低、頭頂空太多：手機往下移一點");
-      else tips.push("👁️ 頭頂太擠：手機往上移一點，讓眼睛落在上三分線");
-      if (lastFace.nose) {
-        const mx = (lastFace.eyes[0].x + lastFace.eyes[1].x) / 2;
-        const turn = (lastFace.nose.x - mx) / (Math.abs(lastFace.eyes[0].x - lastFace.eyes[1].x) + 1e-3);
-        const cx = f.x + f.w / 2;
-        if (turn > .15) tips.push(cx > .55 ? "➡️ 臉朝右，右邊空間太少：手機往右移，視線前方多留白" : "➡️ 臉朝右，前方有留白 ✓");
-        else if (turn < -.15) tips.push(cx < .45 ? "⬅️ 臉朝左，左邊空間太少：手機往左移，視線前方多留白" : "⬅️ 臉朝左，前方有留白 ✓");
-      }
-    }
-  } else if (lastSubject) {
-    const c = { x: lastSubject.x + lastSubject.w / 2, y: lastSubject.y + lastSubject.h / 2 };
-    if (lastSubject.x < .02 || lastSubject.x + lastSubject.w > .98 || lastSubject.y < .02 || lastSubject.y + lastSubject.h > .98)
-      tips.push("✂️ 主體被畫面邊緣切到，往後退一步或轉一點角度");
-    if (area(lastSubject) < .03) tips.push("🔍 主體太小，走近一點，讓它佔畫面更多");
-    else if (Math.abs(c.x - .5) < .06 && Math.abs(c.y - .5) < .06) tips.push("🎯 主體在正中間，不是對稱畫面的話，試試放到三分點");
-  }
-  if (p.backlit) tips.push("☀️ 逆光了，主體會變暗：換到順光的方向，或點一下主體讓相機對它測光");
-  else if (p.mean < .22) tips.push("🌙 畫面太暗，找光源、靠近窗邊，或拿穩手機");
-  if (p.clutter > 1.3) tips.push("🧹 畫面邊緣太雜亂，靠近主體或換個乾淨的背景");
-  if (!tips.length) tips.push("👍 構圖不錯！試試蹲低或舉高，換個高度常有驚喜");
-  $("advice").hidden = false;
-  $("adviceText").textContent = tips.slice(0, 4).join("\n");
-};
-$("adviceClose").onclick = () => $("advice").hidden = true;
 
 /* ---------- 工具 ---------- */
 function area(r) { return r.w * r.h; }
+function center(r) { return { x: r.x + r.w / 2, y: r.y + r.h / 2 }; }
+function contains(r, p) { return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h; }
+function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 function union(rs) {
   const x1 = Math.min(...rs.map(r => r.x)), y1 = Math.min(...rs.map(r => r.y));
   const x2 = Math.max(...rs.map(r => r.x + r.w)), y2 = Math.max(...rs.map(r => r.y + r.h));
