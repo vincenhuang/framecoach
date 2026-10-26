@@ -151,7 +151,7 @@
     <div id="controls">
       <div id="thumb"></div>
       <button id="shutter" aria-label="拍照"></button>
-      <div id="tools"><button id="filterBtn"><i>◐</i>濾鏡</button><button id="tplBtn"><i>▦</i>範本</button></div>
+      <div id="tools"><button id="bokehBtn" class="on" hidden><i>◎</i>柔焦</button><button id="filterBtn"><i>◐</i>濾鏡</button><button id="tplBtn"><i>▦</i>範本</button></div>
     </div>
   </div>
 </div>
@@ -207,6 +207,7 @@ let pendingCue = null;                 // 使用者手動指定的範本
 let pendingId = null, pendingCount = 0;
 let filterId = null;                 // null = 跟著範本推薦
 let showFilters = false;
+let bokehOn = true;
 let preview = null, captureGL = null;
 try { preview = new FilterRenderer($("view")); } catch { $("video").style.opacity = 1; }  // 不支援 WebGL 就顯示原始畫面
 let zoom = 1, hwZoom = null, pinch = null, lastPinchEnd = 0;
@@ -396,6 +397,7 @@ function chooseTemplate() {
 }
 
 function renderTop() {
+  $("bokehBtn").hidden = !active?.bokeh;
   if (!active) {
     $("scene").innerHTML = `<b>範本：一般</b><small>對準人、長廊、建築、風景或美食試試</small>`;
     return;
@@ -440,6 +442,10 @@ function renderFilterChips() {
   }).join("");
   if ($("chips").innerHTML !== html) $("chips").innerHTML = html;
 }
+$("bokehBtn").onclick = () => {
+  bokehOn = !bokehOn;
+  $("bokehBtn").classList.toggle("on", bokehOn);
+};
 $("filterBtn").onclick = () => {
   showFilters = !showFilters;
   $("filterBtn").classList.toggle("on", showFilters);
@@ -680,7 +686,7 @@ $("shutter").onclick = async () => {
   }
 
   // 範本需要背景柔焦時：保留主角，模糊背景
-  if (active?.bokeh && mainCand) {
+  if (active?.bokeh && bokehOn && mainCand) {
     $("shutter").classList.add("busy");
     try {
       const sub = mainCand.box, inView = {
@@ -734,14 +740,26 @@ async function applyBokeh(src, subject, isPerson) {
     m.fillStyle = gr; m.beginPath(); m.arc(0, 0, rx, 0, Math.PI * 2); m.fill();
   }
 
-  // 2. 模糊背景：縮小再放大（Safari 的 canvas 不一定支援 filter）
-  const small = document.createElement("canvas");
-  small.width = Math.max(1, Math.round(W / 14)); small.height = Math.max(1, Math.round(H / 14));
-  const sctx = small.getContext("2d"); sctx.imageSmoothingQuality = "high";
-  sctx.drawImage(src, 0, 0, small.width, small.height);
-  const out = document.createElement("canvas"); out.width = W; out.height = H;
-  const octx = out.getContext("2d"); octx.imageSmoothingQuality = "high";
-  octx.drawImage(small, 0, 0, W, H);
+  // 2. 模糊背景：每次縮小一半、再每次放大一倍，結果是平滑的模糊（一次縮放太多會變馬賽克）
+  const steps = 4;                                        // 縮到 1/16 再放大回來
+  let cur = src;
+  const chain = [];
+  for (let i = 0; i < steps; i++) {
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(cur.width / 2)); c.height = Math.max(1, Math.round(cur.height / 2));
+    const x = c.getContext("2d"); x.imageSmoothingQuality = "high";
+    x.drawImage(cur, 0, 0, c.width, c.height);
+    chain.push(c); cur = c;
+  }
+  for (let i = steps - 2; i >= -1; i--) {
+    const target = i >= 0 ? chain[i] : null;
+    const c = document.createElement("canvas");
+    c.width = target ? target.width : W; c.height = target ? target.height : H;
+    const x = c.getContext("2d"); x.imageSmoothingQuality = "high";
+    x.drawImage(cur, 0, 0, c.width, c.height);
+    cur = c;
+  }
+  const out = cur, octx = out.getContext("2d");
 
   // 3. 清晰的主角疊回去
   const sharp = document.createElement("canvas"); sharp.width = W; sharp.height = H;
