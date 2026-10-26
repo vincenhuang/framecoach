@@ -37,7 +37,6 @@
     border-radius: 12px; padding: 8px 12px; flex: 1; min-width: 0; }
   #scene b { font-size: 16px; }
   #scene small { display: block; color: var(--muted); font-size: 12px; }
-  #gear { background: var(--glass); border-radius: 50%; width: 40px; height: 40px; font-size: 20px; flex: none; }
   #tilt { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); background: var(--warn);
     color: #000; font-weight: 700; padding: 8px 14px; border-radius: 99px; font-size: 14px; z-index: 2; }
 
@@ -81,7 +80,6 @@
     </div>
     <div id="top">
       <div id="scene"><b>場景：分析中…</b><small>把鏡頭對準想拍的東西</small></div>
-      <button id="gear" aria-label="設定">⚙︎</button>
     </div>
     <div id="tilt" hidden></div>
   </div>
@@ -91,7 +89,7 @@
     <div id="controls">
       <div id="thumb"></div>
       <button id="shutter" aria-label="拍照"></button>
-      <button id="ai"><i>✦</i>AI 攝影師</button>
+      <button id="ai"><i>✦</i>構圖檢查</button>
     </div>
   </div>
 </div>
@@ -101,13 +99,6 @@
   <p>自動判斷畫面，給你幾種專業的取景方式。<br>選一個框，按快門，照片會依照建議裁切。</p>
   <button class="btn" id="startBtn">開啟相機</button>
   <p id="startMsg"></p>
-</div>
-
-<div class="sheet" id="settingsSheet" hidden>
-  <h1>設定</h1>
-  <p>「AI 攝影師」需要 Anthropic API Key（到 console.anthropic.com 申請），只會存在這支手機上。</p>
-  <input id="keyInput" type="password" placeholder="sk-ant-..." autocomplete="off">
-  <button class="btn" id="keySave">儲存</button>
 </div>
 
 <div class="sheet" id="preview" hidden>
@@ -133,7 +124,7 @@ const SCENES = {
   animal: ["動物", "蹲到和牠視線一樣高"],
   plant: ["花草", "靠近一點、放低角度，讓背景單純"],
   object: ["物品", "主體放在三分點上，背景越乾淨越好"],
-  general: ["風景／一般", "地平線放在上或下三分之一，別切在正中間"],
+  general: ["風景／街景", "地平線放在上或下三分之一，別切在正中間"],
 };
 const FOOD = ["banana","apple","sandwich","orange","broccoli","carrot","hot dog","pizza","donut","cake","bowl","cup","wine glass","dining table"];
 const ANIMAL = ["bird","cat","dog","horse","sheep","cow","elephant","bear","zebra","giraffe"];
@@ -146,6 +137,7 @@ let selected = 0;         // null = 原始畫面
 let tiltDeg = null;
 let lastPhoto = null;
 let lastRun = 0;
+let lastSubject = null;
 
 /* ---------- 啟動 ---------- */
 $("startBtn").onclick = async () => {
@@ -236,9 +228,16 @@ function analyze(t) {
     subject = union(same);
   }
 
+  lastSubject = subject;
+  let list = subject ? suggest(subject, scene) : [];
+  if (!list.length) {
+    const p = analyzePixels();
+    list = landscapeSuggest(p);
+    if (!subject) { scene = "general"; lastSubject = p.subject; }
+  }
   const [name, tip] = SCENES[scene];
   $("scene").innerHTML = `<b>場景：${name}</b><small>${tip}</small>`;
-  updateSuggestions(subject ? suggest(subject, scene) : []);
+  updateSuggestions(list);
 }
 
 /* ---------- 構圖建議 ---------- */
@@ -349,47 +348,93 @@ $("shareBtn").onclick = async () => {
     try { await navigator.share({ files: [file] }); } catch {}
   }
 };
+/* ---------- 像素分析（免費、在手機上算） ---------- */
+const probe = document.createElement("canvas");
+const pctx = probe.getContext("2d", { willReadFrequently: true });
+let pix = null;   // 最近一次的像素分析結果
 
-/* ---------- AI 攝影師 ---------- */
-const getKey = () => { try { return localStorage.getItem("anthropicKey") || ""; } catch { return ""; } };
-$("gear").onclick = () => { $("keyInput").value = getKey(); $("settingsSheet").hidden = false; };
-$("keySave").onclick = () => {
-  try { localStorage.setItem("anthropicKey", $("keyInput").value.trim()); } catch {}
-  $("settingsSheet").hidden = true;
+function analyzePixels() {
+  const W = 48, H = Math.round(48 * video.videoHeight / video.videoWidth);
+  probe.width = W; probe.height = H;
+  pctx.drawImage(video, 0, 0, W, H);
+  const d = pctx.getImageData(0, 0, W, H).data;
+  const L = new Float32Array(W * H);
+  let mean = 0;
+  for (let i = 0; i < W * H; i++) { L[i] = (d[i*4] * .3 + d[i*4+1] * .59 + d[i*4+2] * .11) / 255; mean += L[i]; }
+  mean /= W * H;
+
+  // 顯著度 = 與整體亮度的差 + 邊緣強度
+  const sal = new Float32Array(W * H), edge = new Float32Array(W * H);
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+    const i = y * W + x;
+    edge[i] = Math.abs(L[i+1] - L[i-1]) + Math.abs(L[i+W] - L[i-W]);
+    sal[i] = Math.abs(L[i] - mean) * .6 + edge[i];
+  }
+  const sorted = Array.from(sal).sort((a, b) => a - b), cut = sorted[Math.floor(sorted.length * .85)];
+  const xs = [], ys = [];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (sal[y*W+x] >= cut) { xs.push(x); ys.push(y); }
+  const pct = (a, q) => { a.sort((m, n) => m - n); return a[Math.floor((a.length - 1) * q)]; };
+  const subject = xs.length > 10 ? { x: pct(xs, .15) / W, y: pct(ys, .15) / H,
+    w: (pct(xs, .85) - pct(xs, .15) + 1) / W, h: (pct(ys, .85) - pct(ys, .15) + 1) / H } : null;
+
+  // 地平線：上方明顯比下方亮的那一列（天空 vs 地面）
+  const row = []; for (let y = 0; y < H; y++) { let t = 0; for (let x = 0; x < W; x++) t += L[y*W+x]; row.push(t / W); }
+  let horizon = null, bestDiff = .08;
+  for (let y = Math.floor(H * .15); y < H * .85; y++) {
+    const up = (row[y-3] + row[y-2] + row[y-1]) / 3, down = (row[y] + row[y+1] + row[y+2]) / 3;
+    if (up - down > bestDiff) { bestDiff = up - down; horizon = y / H; }
+  }
+
+  // 邊緣雜亂度、主體亮度
+  let border = 0, nb = 0, inner = 0, ni = 0;
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+    const e = edge[y*W+x], isB = x < W * .15 || x > W * .85 || y < H * .12 || y > H * .88;
+    if (isB) { border += e; nb++; } else { inner += e; ni++; }
+  }
+  const topLum = row.slice(0, Math.floor(H / 3)).reduce((a, b) => a + b, 0) / Math.floor(H / 3);
+  const midLum = row.slice(Math.floor(H / 3), Math.floor(H * 2 / 3)).reduce((a, b) => a + b, 0) / (Math.floor(H * 2 / 3) - Math.floor(H / 3));
+  pix = { subject, horizon, mean, clutter: border / nb / (inner / ni + 1e-3), backlit: topLum - midLum > .3 };
+  return pix;
+}
+
+/* 風景構圖：地平線放三分線、主體放三分點 */
+function landscapeSuggest(p) {
+  const out = [], s = .82;
+  const cx = p.subject ? p.subject.x + p.subject.w / 2 : .5;
+  const tx = cx < .5 ? 1/3 : 2/3;
+  const crop = ty => ({ x: Math.min(Math.max(cx - tx * s, 0), 1 - s), y: Math.min(Math.max(p.horizon - ty * s, 0), 1 - s), w: s, h: s });
+  if (p.horizon != null) {
+    out.push({ id: 10, title: "天空多一點", tip: "地平線放下三分線，適合天空漂亮時", rect: crop(2/3) });
+    out.push({ id: 11, title: "地面多一點", tip: "地平線放上三分線，突顯前景與建築", rect: crop(1/3) });
+  }
+  if (p.subject && area(p.subject) < .5) {
+    const r = best(p.subject, [.9, .8, .7], THIRDS, .15);
+    if (r) out.push({ id: 12, title: "焦點三分", tip: "把最吸睛的地方放到三分點", rect: r });
+  }
+  return out.filter((x, i) => !out.slice(0, i).some(o => iou(o.rect, x.rect) > .85));
+}
+
+/* ---------- 構圖檢查：免費的文字建議 ---------- */
+$("ai").onclick = () => {
+  if (video.readyState < 2) return;
+  const p = analyzePixels(), tips = [];
+  if (tiltDeg !== null) tips.push(`📐 手機歪了 ${Math.abs(Math.round(tiltDeg))}°，先把手機轉正`);
+  if (p.horizon != null && p.horizon > .42 && p.horizon < .58) tips.push("🌅 地平線切在正中間，手機往上或往下移，把它放到三分線");
+  if (lastSubject) {
+    const c = { x: lastSubject.x + lastSubject.w / 2, y: lastSubject.y + lastSubject.h / 2 };
+    if (lastSubject.x < .02 || lastSubject.x + lastSubject.w > .98 || lastSubject.y < .02 || lastSubject.y + lastSubject.h > .98)
+      tips.push("✂️ 主體被畫面邊緣切到，往後退一步或轉一點角度");
+    if (area(lastSubject) < .03) tips.push("🔍 主體太小，走近一點，讓它佔畫面更多");
+    else if (Math.abs(c.x - .5) < .06 && Math.abs(c.y - .5) < .06) tips.push("🎯 主體在正中間，不是對稱畫面的話，試試放到三分點");
+  }
+  if (p.backlit) tips.push("☀️ 逆光了，主體會變暗：換到順光的方向，或點一下主體讓相機對它測光");
+  else if (p.mean < .22) tips.push("🌙 畫面太暗，找光源、靠近窗邊，或拿穩手機");
+  if (p.clutter > 1.3) tips.push("🧹 畫面邊緣太雜亂，靠近主體或換個乾淨的背景");
+  if (!tips.length) tips.push("👍 構圖不錯！試試蹲低或舉高，換個高度常有驚喜");
+  $("advice").hidden = false;
+  $("adviceText").textContent = tips.slice(0, 4).join("\n");
 };
 $("adviceClose").onclick = () => $("advice").hidden = true;
-
-$("ai").onclick = async () => {
-  const key = getKey();
-  if (!key) { $("gear").click(); return; }
-  const W = video.videoWidth, H = video.videoHeight, s = Math.min(1, 1024 / Math.max(W, H));
-  const c = document.createElement("canvas");
-  c.width = W * s; c.height = H * s;
-  c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
-  const b64 = c.toDataURL("image/jpeg", .7).split(",")[1];
-
-  $("ai").disabled = true;
-  $("advice").hidden = false; $("adviceText").textContent = "AI 攝影師正在看你的畫面…";
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json",
-                 "anthropic-dangerous-direct-browser-access": "true" },
-      body: JSON.stringify({
-        model: "claude-sonnet-5-5", max_tokens: 500,
-        messages: [{ role: "user", content: [
-          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } },
-          { type: "text", text: "你是專業攝影師，正在指導一位手機拍照新手。這是他目前相機的畫面。請用繁體中文給出 3 個具體、馬上能做的取景建議，每個建議一行，格式：「名稱：怎麼做（往哪移、蹲低或舉高、橫拍或直拍、用什麼構圖）」，每行不超過 40 字，不要其他說明。" },
-        ] }],
-      }),
-    });
-    const j = await res.json();
-    $("adviceText").textContent = res.ok ? j.content.map(x => x.text || "").join("") : "⚠️ " + (j.error?.message || res.status);
-  } catch (e) {
-    $("adviceText").textContent = "⚠️ 連線失敗：" + e.message;
-  }
-  $("ai").disabled = false;
-};
 
 /* ---------- 工具 ---------- */
 function area(r) { return r.w * r.h; }
