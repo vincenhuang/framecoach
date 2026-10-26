@@ -41,7 +41,8 @@
     color: #000; font-weight: 700; padding: 8px 14px; border-radius: 99px; font-size: 14px; z-index: 2; }
 
   #bottom { padding: 8px 16px 10px; display: flex; flex-direction: column; gap: 10px; }
-  #advice { background: var(--glass); border-radius: 12px; padding: 10px 12px; font-size: 13px; white-space: pre-wrap;
+  #advice { position: absolute; left: 16px; right: 16px; bottom: 10px; z-index: 3;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); background: var(--glass); border-radius: 12px; padding: 10px 12px; font-size: 13px; white-space: pre-wrap;
     display: flex; gap: 8px; max-height: 30vh; overflow: auto; }
   #advice div { flex: 1; min-width: 0; }
   #chips { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
@@ -82,9 +83,9 @@
       <div id="scene"><b>場景：分析中…</b><small>把鏡頭對準想拍的東西</small></div>
     </div>
     <div id="tilt" hidden></div>
+    <div id="advice" hidden><div id="adviceText"></div><button id="adviceClose" aria-label="關閉">✕</button></div>
   </div>
   <div id="bottom">
-    <div id="advice" hidden><div id="adviceText"></div><button id="adviceClose" aria-label="關閉">✕</button></div>
     <div id="chips"></div>
     <div id="controls">
       <div id="thumb"></div>
