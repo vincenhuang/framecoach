@@ -17,6 +17,7 @@
     --chip: rgba(255,255,255,.14);
     --accent: #ffd60a;
     --warn: #ff9f0a;
+    --guide: #64d2ff;
     color-scheme: dark;
   }
   [hidden] { display: none !important; }
@@ -59,7 +60,7 @@
   #bottom { padding: 8px 16px 10px; display: flex; flex-direction: column; gap: 10px; }
   #chips { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
   #chips::-webkit-scrollbar { display: none; }
-  .chip { flex: none; width: 138px; text-align: left; background: var(--chip); border-radius: 12px; padding: 8px 10px; }
+  .chip { flex: none; width: 128px; text-align: left; background: var(--chip); border-radius: 12px; padding: 8px 10px; }
   .chip b { display: block; font-size: 14px; }
   .chip span { font-size: 11px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .chip.on { background: var(--accent); color: #000; }
@@ -68,6 +69,10 @@
   #thumb { width: 54px; height: 54px; border-radius: 8px; background: var(--chip) center/cover; }
   #shutter { width: 74px; height: 74px; border-radius: 50%; background: #fff; box-shadow: inset 0 0 0 3px #000, 0 0 0 3px #fff; }
   #shutter:active { transform: scale(.94); }
+  #shutter.busy { opacity: .5; }
+  #tplBtn { width: 54px; height: 54px; border-radius: 12px; background: var(--chip); display: flex; flex-direction: column;
+    align-items: center; justify-content: center; font-size: 11px; gap: 2px; }
+  #tplBtn i { font-style: normal; font-size: 20px; line-height: 1; }
 
   .sheet { position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 10; display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 16px; padding: 24px 16px; text-align: center; }
@@ -75,10 +80,26 @@
   .sheet p { color: var(--muted); margin: 0; max-width: 32em; }
   .btn { background: var(--accent); color: #000; font-weight: 700; padding: 14px 28px; border-radius: 99px; font-size: 17px; }
   .btn.ghost { background: var(--chip); color: var(--fg); }
-  .sheet input { width: 100%; max-width: 360px; padding: 12px; border-radius: 10px; border: 1px solid var(--chip);
-    background: #111; color: var(--fg); font-size: 15px; }
   #preview img { max-height: 60vh; border-radius: 8px; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* 範本清單 */
+  #gallery { justify-content: flex-start; overflow-y: auto; touch-action: pan-y; background: rgba(0,0,0,.94);
+    padding-top: calc(env(safe-area-inset-top) + 20px); }
+  #gallery header { width: 100%; max-width: 560px; display: flex; justify-content: space-between; align-items: center; }
+  #gallery header h1 { font-size: 22px; }
+  #tplGrid { width: 100%; max-width: 560px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;
+    padding-bottom: 24px; }
+  .tpl { background: var(--chip); border-radius: 14px; padding: 12px; text-align: left; display: flex; gap: 10px; min-width: 0; }
+  .tpl.on { outline: 2px solid var(--accent); }
+  .tpl div { min-width: 0; }
+  .tpl b { display: block; font-size: 14px; margin-bottom: 4px; }
+  .tpl ol { margin: 0; padding-left: 16px; font-size: 11px; color: var(--muted); }
+  .tpl-svg { flex: none; width: 42px; height: 56px; background: #1c1c1e; border-radius: 6px;
+    fill: none; stroke: rgba(255,255,255,.7); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .tpl-svg .t { stroke: var(--guide); stroke-dasharray: 3 3; }
+  .tpl-svg .g { stroke: rgba(255,255,255,.2); stroke-width: 1; }
+  #scene .steps { display: block; color: var(--guide); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -89,7 +110,7 @@
       <canvas id="overlay"></canvas>
     </div>
     <div id="top">
-      <div id="scene"><b>場景：分析中…</b><small>把鏡頭對準想拍的東西</small></div>
+      <div id="scene"><b>範本：分析中…</b><small>把鏡頭對準想拍的東西</small></div>
     </div>
     <div id="cue" hidden></div>
     <button id="zoom" hidden>1.0×</button>
@@ -99,21 +120,27 @@
     <div id="controls">
       <div id="thumb"></div>
       <button id="shutter" aria-label="拍照"></button>
-      <div style="width:54px"></div>
+      <button id="tplBtn"><i>▦</i>範本</button>
     </div>
   </div>
 </div>
 
 <div class="sheet" id="startSheet">
   <h1>取景教練</h1>
-  <p>自動判斷畫面，給你幾種專業的取景方式。<br>選一個框，按快門，照片會依照建議裁切。</p>
+  <p>自動判斷你在拍什麼，套用專業範本，<br>一步步告訴你怎麼移動、怎麼拍。</p>
   <button class="btn" id="startBtn">開啟相機</button>
   <p id="startMsg"></p>
 </div>
 
+<div class="sheet" id="gallery" hidden>
+  <header><h1>拍攝範本</h1><button class="btn ghost" id="galleryClose">關閉</button></header>
+  <p>App 會自動判斷畫面適合哪個範本，也可以在這裡直接指定。</p>
+  <div id="tplGrid"></div>
+</div>
+
 <div class="sheet" id="preview" hidden>
   <img id="previewImg" alt="拍好的照片">
-  <p>長按照片 →「加入照片」即可存到相簿</p>
+  <p>按「儲存／分享」→「儲存影像」存到相簿，或長按照片 →「加入照片」</p>
   <div style="display:flex;gap:10px">
     <button class="btn" id="shareBtn">儲存／分享</button>
     <button class="btn ghost" id="previewClose">繼續拍</button>
@@ -121,35 +148,30 @@
 </div>
 
 <script type="module">
-import { FilesetResolver, ObjectDetector, FaceDetector }
+import { FilesetResolver, ObjectDetector, FaceDetector, ImageSegmenter }
   from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+import { TEMPLATES, rankTemplates, templateSVG } from "./templates.js";
 
 const $ = id => document.getElementById(id);
 const video = $("video"), overlay = $("overlay"), ctx = overlay.getContext("2d");
+const GUIDE = "#64d2ff";
 
-/* ---------- 場景 ---------- */
-const SCENES = {
-  portrait: ["人像", "眼睛放在上三分線，頭頂別留太多空間"],
-  food: ["美食", "試試 45° 斜拍，或手機平舉正上方俯拍"],
-  animal: ["動物", "蹲到和牠視線一樣高"],
-  plant: ["花草", "靠近一點、放低角度，讓背景單純"],
-  object: ["物品", "主體放在三分點上，背景越乾淨越好"],
-  general: ["風景／街景", "地平線放在上或下三分之一，別切在正中間"],
-};
-const FOOD = ["banana","apple","sandwich","orange","broccoli","carrot","hot dog","pizza","donut","cake","bowl","cup","wine glass","dining table"];
+const FOOD = ["banana","apple","sandwich","orange","broccoli","carrot","hot dog","pizza","donut","cake","bowl","cup","wine glass"];
 const ANIMAL = ["bird","cat","dog","horse","sheep","cow","elephant","bear","zebra","giraffe"];
-const PLANT = ["potted plant","vase"];
+const NAMES = { person: "人", dog: "狗", cat: "貓", bird: "鳥", cup: "杯子", bowl: "碗", cake: "蛋糕",
+  pizza: "披薩", "potted plant": "盆栽", vase: "花瓶", car: "車", bicycle: "腳踏車", book: "書", "cell phone": "手機",
+  bottle: "瓶子", "wine glass": "酒杯", sandwich: "三明治", donut: "甜甜圈", chair: "椅子", bench: "長椅" };
 
 /* ---------- 狀態 ---------- */
-let objDet, faceDet;
-let suggestions = [];     // {id,title,tip,rect:{x,y,w,h}} 比例座標 0~1
-let selected = 0;         // null = 原始畫面
-let tiltDeg = null;
-let lastPhoto = null;
-let lastRun = 0;
-let lastSubject = null;
-let lastFace = null;
+let visionFiles, objDet, faceDet, segmenter;
+let tiltDeg = null, gravity = null;
+let lastPhoto = null, lastRun = 0;
 let allCands = [], mainCand = null, lock = null, cue = null;
+let feat = null;                     // 最近一次的畫面特徵
+let ranked = [];                     // 符合的範本（分數高到低）
+let active = null;                   // 目前套用的範本
+let manualId = null;                 // 使用者手動指定的範本
+let pendingId = null, pendingCount = 0;
 let zoom = 1, hwZoom = null, pinch = null, lastPinchEnd = 0;
 
 /* ---------- 啟動 ---------- */
@@ -177,11 +199,11 @@ $("startBtn").onclick = async () => {
 };
 
 async function loadModels() {
-  const fs = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
-  objDet = await ObjectDetector.createFromOptions(fs, {
+  visionFiles = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+  objDet = await ObjectDetector.createFromOptions(visionFiles, {
     baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite", delegate: "GPU" },
     scoreThreshold: 0.35, runningMode: "VIDEO" });
-  faceDet = await FaceDetector.createFromOptions(fs, {
+  faceDet = await FaceDetector.createFromOptions(visionFiles, {
     baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite", delegate: "GPU" },
     runningMode: "VIDEO" });
 }
@@ -199,16 +221,17 @@ function layout() {
 window.addEventListener("resize", layout);
 video.addEventListener("loadedmetadata", layout);
 
-/* ---------- 水平 ---------- */
-// 用重力方向計算手機左右傾斜（直拿時最準）
+/* ---------- 水平與手機姿勢 ---------- */
 function onMotion(e) {
   const g = e.accelerationIncludingGravity;
   if (!g || g.x == null) return;
-  // 手機接近平放時不判斷（例如俯拍美食）
+  gravity = g;
+  // 手機接近平放時不判斷左右傾斜（例如俯拍美食）
   if (Math.abs(g.z) > Math.hypot(g.x, g.y)) { tiltDeg = null; return; }
   const deg = Math.atan2(g.x, Math.abs(g.y)) * 180 / Math.PI;
   tiltDeg = Math.abs(deg) > 3 && Math.abs(deg) < 35 ? deg : null;
 }
+const phoneFlat = () => !!gravity && Math.abs(gravity.z) > 8;
 
 /* ---------- 分析迴圈 ---------- */
 let lastDims = "";
@@ -222,10 +245,6 @@ function loop(t) {
   draw();
   requestAnimationFrame(loop);
 }
-
-const NAMES = { person: "人", dog: "狗", cat: "貓", bird: "鳥", cup: "杯子", bowl: "碗", cake: "蛋糕",
-  pizza: "披薩", "potted plant": "盆栽", vase: "花瓶", car: "車", bicycle: "腳踏車", book: "書", "cell phone": "手機",
-  bottle: "瓶子", "wine glass": "酒杯", sandwich: "三明治", donut: "甜甜圈", chair: "椅子", bench: "長椅" };
 
 function analyze(t) {
   const W = video.videoWidth, H = video.videoHeight;
@@ -246,10 +265,9 @@ function analyze(t) {
     cands.push(o);
   }
 
-  // 選主角：使用者點過的優先（持續追蹤），否則選又大又靠近中央的
+  // 選主角：鎖定的優先（持續追蹤），否則選又大又靠近中央的
   let main = null;
   if (lock) {
-    // 只在同類型裡找最接近上次位置的那個
     const same = cands.filter(c => !!c.face === lock.face && (lock.face || c.name === lock.cand.name));
     const near = same.length ? same.reduce((a, b) => dist(center(b.box), center(lock.cand.box)) < dist(center(a.box), center(lock.cand.box)) ? b : a) : null;
     if (near && dist(center(near.box), center(lock.cand.box)) < .3) { main = lock.cand = near; lock.miss = 0; }
@@ -262,87 +280,137 @@ function analyze(t) {
   }
   mainCand = main;
   allCands = cands;
-  lastFace = main?.face || null;
 
-  let scene = "general";
-  if (main) scene = main.face || main.name === "person" ? "portrait" : FOOD.includes(main.name) ? "food"
-    : ANIMAL.includes(main.name) ? "animal" : PLANT.includes(main.name) ? "plant" : "object";
-
+  // 畫面特徵
   const p = analyzePixels();
-  let list = main ? suggest(main.box, scene) : [];
-  if (!list.length) list = landscapeSuggest(p);
-  lastSubject = main?.box || p.subject;
-
-  const [name, tip] = SCENES[scene];
-  $("scene").innerHTML = `<b>場景：${name}</b><small>${tip}・點主角鎖定・雙指縮放</small>`;
-  updateSuggestions(list);
-  cue = computeCue(p);
-}
-
-/* 一次只給一個最重要的提示 */
-function computeCue(p) {
-  if (tiltDeg !== null) return { t: `↻ 轉正 ${Math.abs(Math.round(tiltDeg))}°` };
-  const f = lastFace?.box;
-  if (f && (f.x < .01 || f.x + f.w > .99 || f.y < .01 || f.y + f.h > .99)) return { t: "↙ 退後一點" };
-  const sel = suggestions.find(s => s.id === selected);
-  if (sel) {
-    const dx = sel.rect.x + sel.rect.w / 2 - .5, dy = sel.rect.y + sel.rect.h / 2 - .5;
-    if (Math.max(Math.abs(dx), Math.abs(dy)) > .07)
-      return Math.abs(dx) > Math.abs(dy) ? { t: dx > 0 ? "→ 往右移" : "← 往左移" } : { t: dy > 0 ? "↓ 往下移" : "↑ 往上移" };
-    if (sel.rect.w < .8) return { t: "⊕ 靠近一點" };
-  } else if (lastFace?.eyes.length === 2) {
-    const ey = (lastFace.eyes[0].y + lastFace.eyes[1].y) / 2;
-    if (ey > 1/3 + .08) return { t: "↓ 手機往下" };
-    if (ey < 1/3 - .08) return { t: "↑ 手機往上" };
+  const isPerson = !!main && (!!main.face || main.name === "person");
+  const personBox = main?.face
+    ? objs.find(o => o.name === "person" && contains(o.box, center(main.face.box)))?.box || null
+    : main?.name === "person" ? main.box : null;
+  let face = null;
+  if (main?.face) {
+    const fc = main.face;
+    let turn = 0;
+    if (fc.eyes.length === 2 && fc.nose) {
+      const mx = (fc.eyes[0].x + fc.eyes[1].x) / 2;
+      turn = (fc.nose.x - mx) / (Math.abs(fc.eyes[0].x - fc.eyes[1].x) + 1e-3);
+    }
+    face = { ...fc, turn };
   }
-  if (lastSubject && area(lastSubject) < .03) return { t: "⊕ 靠近一點" };
-  if (!mainCand && p.horizon != null && p.horizon > .42 && p.horizon < .58) return { t: "↕ 地平線別放中間" };
-  if (p.backlit) return { t: "☀ 逆光，換個方向" };
-  if (p.mean < .22) return { t: "☾ 太暗了" };
-  return { t: "✓ 可以拍了", ok: true };
+  feat = {
+    face, person: personBox, subjectBox: main?.box || null, subjectIsPerson: isPerson,
+    food: !!main && FOOD.includes(main.name), animal: !!main && ANIMAL.includes(main.name),
+    object: !!main && !isPerson && !FOOD.includes(main.name) && !ANIMAL.includes(main.name),
+    flat: phoneFlat(), ...p,
+  };
+
+  chooseTemplate();
+  cue = computeCue(feat, active);
+  renderTop();
 }
 
-/* ---------- 構圖建議 ---------- */
-const THIRDS = [[1/3,1/3],[2/3,1/3],[1/3,2/3],[2/3,2/3]], CENTER = [[.5,.5]];
-
-function suggest(sub, scene) {
-  const out = [];
-  const a = best(sub, [.95,.85,.75], THIRDS, .12);
-  if (a) out.push({ id: 0, title: "三分法", tip: "主體放在三分點，帶到周圍環境", rect: a });
-  const b = best(sub, [.9,.8,.7,.6], CENTER, .2);
-  if (b) out.push({ id: 1, title: "置中對稱", tip: "主體放正中間，畫面穩定有力", rect: b });
-  const c = best(sub, [.4,.5,.6,.7], [...THIRDS, ...CENTER], .35);
-  if (c) out.push({ id: 2, title: scene === "portrait" ? "人像特寫" : "靠近特寫",
-    tip: scene === "portrait" ? "眼睛對齊上三分線，背景越簡單越好" : "靠近主體，去掉雜亂的背景", rect: c });
-  return out.filter((s, i) => !out.slice(0, i).some(o => iou(o.rect, s.rect) > .85));
-}
-
-function best(sub, sizes, targets, idealFill) {
-  const cx = sub.x + sub.w / 2, cy = sub.y + sub.h / 2;
-  let bestR = null, bestS = -Infinity;
-  for (const s of sizes) for (const [tx, ty] of targets) {
-    const x = Math.min(Math.max(cx - tx * s, 0), 1 - s), y = Math.min(Math.max(cy - ty * s, 0), 1 - s);
-    const r = { x, y, w: s, h: s };
-    const inter = intersect(r, sub);
-    if (!inter || area(inter) < area(sub) * .92) continue;  // 主體要幾乎完整入鏡
-    const err = Math.hypot((cx - x) / s - tx, (cy - y) / s - ty);
-    const score = -err * 3 - Math.abs(area(sub) / (s * s) - idealFill);
-    if (score > bestS) { bestS = score; bestR = r; }
+/* ---------- 範本選擇 ---------- */
+function chooseTemplate() {
+  ranked = rankTemplates(feat);
+  let next;
+  if (manualId) next = TEMPLATES.find(t => t.id === manualId);
+  else {
+    const top = ranked[0]?.t || null;
+    // 避免範本一直跳：新範本要連續勝出 3 次（約 1 秒）才切換
+    if (!active || !top || top === active || !ranked.some(r => r.t === active)) next = top;
+    else {
+      if (pendingId === top.id) pendingCount++; else { pendingId = top.id; pendingCount = 1; }
+      next = pendingCount >= 3 ? top : active;
+    }
   }
-  return bestR;
-}
-
-/* 平滑移動，避免框框亂跳 */
-function updateSuggestions(next) {
-  suggestions = next.map(n => {
-    const old = suggestions.find(o => o.id === n.id);
-    if (!old) return n;
-    const k = .4, r = {};
-    for (const p of ["x","y","w","h"]) r[p] = old.rect[p] + (n.rect[p] - old.rect[p]) * k;
-    return { ...n, rect: r };
-  });
-  if (selected !== null && !suggestions.some(s => s.id === selected)) selected = suggestions[0]?.id ?? null;
+  if (next !== active) {
+    active = next;
+    pendingId = null;
+    if (active?.zoom && hwZoom) setZoom(active.zoom);    // 自動切換焦段
+  }
   renderChips();
+}
+
+function renderTop() {
+  if (!active) {
+    $("scene").innerHTML = `<b>範本：一般</b><small>對準人、長廊、建築、風景或美食試試</small>`;
+    return;
+  }
+  const mode = manualId ? "指定" : "自動";
+  $("scene").innerHTML = `<b>${active.name}</b><small>${mode}・點主角可鎖定・雙指縮放</small>` +
+    `<span class="steps">${active.steps.map((s, i) => `${i + 1}. ${s}`).join("　")}</span>`;
+}
+
+function renderChips() {
+  const shown = ranked.slice(0, 4).map(r => r.t);
+  if (active && !shown.includes(active)) shown.unshift(active);
+  const items = [{ id: "", short: "自動", tip: manualId ? "回到自動判斷" : "自動判斷中" }, ...shown.map(t => ({ id: t.id, short: t.short, tip: t.steps[0] }))];
+  const html = items.map(s => {
+    const on = s.id === "" ? !manualId : s.id === manualId || (!manualId && active?.id === s.id);
+    return `<button class="chip${on ? " on" : ""}" data-id="${s.id}"><b>${s.short}</b><span>${s.tip}</span></button>`;
+  }).join("");
+  if ($("chips").innerHTML !== html) $("chips").innerHTML = html;
+}
+$("chips").onclick = e => {
+  const b = e.target.closest(".chip"); if (!b) return;
+  pickTemplate(b.dataset.id || null);
+};
+function pickTemplate(id) {
+  manualId = id;
+  if (feat) { chooseTemplate(); cue = computeCue(feat, active); renderTop(); }
+}
+
+/* ---------- 範本清單 ---------- */
+$("tplBtn").onclick = () => {
+  $("tplGrid").innerHTML = TEMPLATES.map(t =>
+    `<button class="tpl${t.id === manualId ? " on" : ""}" data-id="${t.id}">${templateSVG(t)}<div><b>${t.name}</b><ol>${t.steps.map(s => `<li>${s}</li>`).join("")}</ol></div></button>`).join("");
+  $("gallery").hidden = false;
+};
+$("galleryClose").onclick = () => $("gallery").hidden = true;
+$("tplGrid").onclick = e => {
+  const b = e.target.closest(".tpl"); if (!b) return;
+  pickTemplate(b.dataset.id);
+  $("gallery").hidden = true;
+};
+
+/* ---------- 引導：一次只給一個最重要的提示 ---------- */
+// cur 是東西現在的位置，tgt 是範本要它在的位置。東西偏右 → 手機往右轉，它就會往中間移
+function moveCue(cur, tgt, tol = .06) {
+  const dx = cur.x == null ? 0 : cur.x - tgt.x, dy = cur.y == null ? 0 : cur.y - tgt.y;
+  if (Math.max(Math.abs(dx), Math.abs(dy)) <= tol) return null;
+  return Math.abs(dx) >= Math.abs(dy) ? { t: dx > 0 ? "→ 往右移" : "← 往左移" } : { t: dy > 0 ? "↓ 往下移" : "↑ 往上移" };
+}
+
+function computeCue(f, tpl) {
+  if (tiltDeg !== null && !f.flat) return { t: `↻ 轉正 ${Math.abs(Math.round(tiltDeg))}°` };
+  if (f.face && (f.face.box.x < .01 || f.face.box.x + f.face.box.w > .99 || f.face.box.y < .01)) return { t: "↙ 退後一點" };
+  if (tpl) {
+    const g = tpl.target(f);
+    if (g.vp && f.vp) { const c = moveCue(f.vp, g.vp, .07); if (c) return c; }
+    if (g.eyes && f.face?.eyes.length === 2) {
+      const e = { x: (f.face.eyes[0].x + f.face.eyes[1].x) / 2, y: (f.face.eyes[0].y + f.face.eyes[1].y) / 2 };
+      const c = moveCue(e, g.eyes, .07); if (c) return c;
+    }
+    if (g.faceH && f.face) {
+      if (f.face.box.h < g.faceH * .7) return { t: "⊕ 靠近一點" };
+      if (f.face.box.h > g.faceH * 1.5) return { t: "⊖ 退後一點" };
+    }
+    if (g.person && f.person) {
+      if (f.person.y < .02 || f.person.y + f.person.h > .995) return { t: "⊖ 退後，全身要入鏡" };
+      const c = moveCue({ y: f.person.y + f.person.h }, { y: g.person.bottom }, .05); if (c) return c;
+      if (f.person.h < .6) return { t: "⊕ 靠近一點" };
+    }
+    if (g.subject && f.subjectBox) { const c = moveCue(center(f.subjectBox), g.subject, .07); if (c) return c; }
+    if (g.subjectH && f.subjectBox) {
+      if (f.subjectBox.h < g.subjectH * .7) return { t: "⊕ 靠近一點" };
+      if (f.subjectBox.h > g.subjectH * 1.6) return { t: "⊖ 退後一點" };
+    }
+    if (g.horizon != null && f.horizon != null) { const c = moveCue({ y: f.horizon }, { y: g.horizon }, .06); if (c) return c; }
+    if (g.axis != null && f.symAxis != null) { const c = moveCue({ x: f.symAxis }, { x: g.axis }, .04); if (c) return c; }
+  }
+  if (f.backlit) return { t: "☀ 逆光，換個方向" };
+  if (f.mean < .22) return { t: "☾ 太暗了" };
+  return { t: "✓ 可以拍了", ok: true };
 }
 
 /* ---------- 畫面 ---------- */
@@ -350,22 +418,10 @@ function draw() {
   const W = overlay.width, H = overlay.height, d = devicePixelRatio;
   ctx.clearRect(0, 0, W, H);
 
-  const sel = suggestions.find(s => s.id === selected);
-  if (sel) {
-    const r = px(sel.rect);
-    ctx.fillStyle = "rgba(0,0,0,.45)";
-    ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.rect(r.x, r.y + r.h, r.w, -r.h); ctx.fill("evenodd");
-  }
-  for (const s of suggestions) {
-    const r = px(s.rect), on = s.id === selected;
-    ctx.setLineDash(on ? [] : [6 * d, 4 * d]);
-    ctx.strokeStyle = on ? "#ffd60a" : "rgba(255,255,255,.55)";
-    ctx.lineWidth = (on ? 2.5 : 1) * d;
-    ctx.strokeRect(r.x, r.y, r.w, r.h);
-  }
-  ctx.setLineDash([]);
+  // 範本的目標位置（藍色虛線）
+  if (active && feat) drawTarget(active.target(feat), W, H, d);
 
-  // 其他可選的物品：淡淡的細框，點了就換成主角
+  // 其他可選的人或物：淡淡的細框，點了就鎖定
   ctx.strokeStyle = "rgba(255,255,255,.45)"; ctx.lineWidth = 1 * d; ctx.setLineDash([3 * d, 3 * d]);
   for (const c of allCands) if (c !== mainCand) { const r = px(c.face ? c.face.box : c.box); ctx.strokeRect(r.x, r.y, r.w, r.h); }
   ctx.setLineDash([]);
@@ -385,19 +441,49 @@ function draw() {
   const cueEl = $("cue");
   if (cue) { cueEl.hidden = false; if (cueEl.textContent !== cue.t) cueEl.textContent = cue.t; cueEl.classList.toggle("ok", !!cue.ok); }
 }
-const px = r => ({ x: r.x * overlay.width, y: r.y * overlay.height, w: r.w * overlay.width, h: r.h * overlay.height });
 
-function renderChips() {
-  const items = [{ id: null, title: "原始畫面", tip: "不裁切" }, ...suggestions];
-  const html = items.map(s =>
-    `<button class="chip${s.id === selected ? " on" : ""}" data-id="${s.id}"><b>${s.title}</b><span>${s.tip}</span></button>`).join("");
-  if ($("chips").innerHTML !== html) $("chips").innerHTML = html;
+function drawTarget(g, W, H, d) {
+  ctx.save();
+  ctx.strokeStyle = GUIDE; ctx.fillStyle = GUIDE; ctx.lineWidth = 2 * d; ctx.setLineDash([8 * d, 6 * d]);
+  ctx.font = `700 ${12 * d}px -apple-system, sans-serif`;
+  const label = (text, x, y) => { ctx.save(); ctx.setLineDash([]); ctx.fillText(text, x, y); ctx.restore(); };
+  const hline = (y, text) => { ctx.beginPath(); ctx.moveTo(0, y * H); ctx.lineTo(W, y * H); ctx.stroke(); label(text, 8 * d, y * H - 6 * d); };
+
+  if (g.vp) {
+    const x = g.vp.x * W, y = g.vp.y * H;
+    ctx.beginPath(); ctx.arc(x, y, 18 * d, 0, Math.PI * 2); ctx.stroke();
+    label("消失點放這", x - 30 * d, y - 24 * d);
+    if (feat.vp) {   // 目前的消失點（實心點）＋連線
+      const cx = feat.vp.x * W, cy = feat.vp.y * H;
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(x, y); ctx.stroke();
+      ctx.setLineDash([]); ctx.beginPath(); ctx.arc(cx, cy, 5 * d, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  if (g.eyes) {
+    const y = g.eyes.y * H;
+    hline(g.eyes.y, "眼睛放這條線");
+    ctx.setLineDash([]); ctx.beginPath(); ctx.arc(g.eyes.x * W, y, 6 * d, 0, Math.PI * 2); ctx.fill();
+  }
+  if (g.person) { hline(g.person.top, "頭頂"); hline(g.person.bottom, "腳底"); }
+  if (g.horizon != null) {
+    hline(g.horizon, "地平線放這");
+    if (feat.horizon != null) {   // 目前偵測到的地平線（細實線）
+      ctx.save(); ctx.setLineDash([]); ctx.lineWidth = 1 * d; ctx.strokeStyle = "rgba(100,210,255,.5)";
+      ctx.beginPath(); ctx.moveTo(0, feat.horizon * H); ctx.lineTo(W, feat.horizon * H); ctx.stroke(); ctx.restore();
+    }
+  }
+  if (g.axis != null) {
+    ctx.beginPath(); ctx.moveTo(g.axis * W, 0); ctx.lineTo(g.axis * W, H); ctx.stroke();
+    label("中線對齊", g.axis * W + 6 * d, 40 * d);
+  }
+  if (g.subject) {
+    const x = g.subject.x * W, y = g.subject.y * H, r = (g.subjectH ? g.subjectH * H / 2 : 26 * d);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+    label("主角放這", x - 24 * d, y - r - 6 * d);
+  }
+  ctx.restore();
 }
-$("chips").onclick = e => {
-  const b = e.target.closest(".chip"); if (!b) return;
-  selected = b.dataset.id === "null" ? null : +b.dataset.id;
-  renderChips();
-};
+const px = r => ({ x: r.x * overlay.width, y: r.y * overlay.height, w: r.w * overlay.width, h: r.h * overlay.height });
 
 /* ---------- 雙指縮放（只縮放相機畫面） ---------- */
 function setZoom(z) {
@@ -427,13 +513,16 @@ $("zoom").onclick = () => setZoom(1);
 // 擋掉 Safari 的整頁縮放
 for (const ev of ["gesturestart", "gesturechange", "gestureend"]) document.addEventListener(ev, e => e.preventDefault());
 let lastTouch = 0;
-document.addEventListener("touchend", e => { const n = performance.now(); if (n - lastTouch < 300) e.preventDefault(); lastTouch = n; }, { passive: false });
+document.addEventListener("touchend", e => {
+  if (e.target.closest("#gallery")) return;
+  const n = performance.now(); if (n - lastTouch < 300) e.preventDefault(); lastTouch = n;
+}, { passive: false });
 
 /* ---------- 點畫面鎖定主角 ---------- */
 overlay.addEventListener("click", e => {
+  if (performance.now() - lastPinchEnd < 400) return;     // 剛縮放完的觸控不算點擊
   const b = overlay.getBoundingClientRect();
   const pt = { x: (e.clientX - b.left) / b.width, y: (e.clientY - b.top) / b.height };
-  if (performance.now() - lastPinchEnd < 400) return;     // 剛縮放完的觸控不算點擊
   const boxOf = c => c.face ? c.face.box : c.box;
   const hit = allCands.filter(c => contains(boxOf(c), pt) || contains(c.box, pt))
     .sort((a, b) => area(boxOf(a)) - area(boxOf(b)))[0];   // 重疊時選比較小的那個
@@ -442,16 +531,27 @@ overlay.addEventListener("click", e => {
 });
 
 /* ---------- 拍照 ---------- */
-$("shutter").onclick = () => {
+$("shutter").onclick = async () => {
+  if ($("shutter").classList.contains("busy")) return;
   const W = video.videoWidth, H = video.videoHeight;
+  // 數位放大時只存看得到的範圍
   const v = hwZoom || zoom <= 1 ? { x: 0, y: 0, w: 1, h: 1 }
     : { x: .5 - .5 / zoom, y: .5 - .5 / zoom, w: 1 / zoom, h: 1 / zoom };
-  const sel = suggestions.find(s => s.id === selected)?.rect;
-  const inside = sel && sel.x >= v.x && sel.y >= v.y && sel.x + sel.w <= v.x + v.w && sel.y + sel.h <= v.y + v.h;
-  const r = inside ? sel : v;
-  const c = document.createElement("canvas");
-  c.width = Math.round(r.w * W); c.height = Math.round(r.h * H);
-  c.getContext("2d").drawImage(video, r.x * W, r.y * H, r.w * W, r.h * H, 0, 0, c.width, c.height);
+  let c = document.createElement("canvas");
+  c.width = Math.round(v.w * W); c.height = Math.round(v.h * H);
+  c.getContext("2d").drawImage(video, v.x * W, v.y * H, v.w * W, v.h * H, 0, 0, c.width, c.height);
+
+  // 範本需要背景柔焦時：保留主角，模糊背景
+  if (active?.bokeh && mainCand) {
+    $("shutter").classList.add("busy");
+    try {
+      const sub = mainCand.box, inView = {
+        x: (sub.x - v.x) / v.w, y: (sub.y - v.y) / v.h, w: sub.w / v.w, h: sub.h / v.h };
+      c = await applyBokeh(c, inView, !!mainCand.face || mainCand.name === "person");
+    } catch {}
+    $("shutter").classList.remove("busy");
+  }
+
   c.toBlob(blob => {
     lastPhoto = blob;
     const url = URL.createObjectURL(blob);
@@ -468,13 +568,60 @@ $("shareBtn").onclick = async () => {
     try { await navigator.share({ files: [file] }); } catch {}
   }
 };
-/* ---------- 像素分析（免費、在手機上算） ---------- */
+
+/* ---------- 背景柔焦（模擬大光圈） ---------- */
+async function applyBokeh(src, subject, isPerson) {
+  const W = src.width, H = src.height;
+
+  // 1. 主角遮罩：人用去背模型，物品用主角周圍的柔邊橢圓
+  const mask = document.createElement("canvas");
+  if (isPerson) {
+    if (!segmenter) segmenter = await ImageSegmenter.createFromOptions(visionFiles, {
+      baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite", delegate: "GPU" },
+      runningMode: "IMAGE", outputConfidenceMasks: true, outputCategoryMask: false });
+    const res = segmenter.segment(src);
+    const m = res.confidenceMasks[0], data = m.getAsFloat32Array();
+    mask.width = m.width; mask.height = m.height;
+    const img = mask.getContext("2d").createImageData(m.width, m.height);
+    for (let i = 0; i < data.length; i++) img.data[i * 4 + 3] = Math.min(255, data[i] * 290);
+    mask.getContext("2d").putImageData(img, 0, 0);
+    res.close?.();
+  } else {
+    mask.width = 200; mask.height = Math.round(200 * H / W);
+    const m = mask.getContext("2d"), c = center(subject);
+    const rx = subject.w * mask.width * .75, ry = subject.h * mask.height * .75;
+    m.translate(c.x * mask.width, c.y * mask.height); m.scale(1, ry / rx);
+    const gr = m.createRadialGradient(0, 0, rx * .6, 0, 0, rx);
+    gr.addColorStop(0, "#000"); gr.addColorStop(1, "rgba(0,0,0,0)");
+    m.fillStyle = gr; m.beginPath(); m.arc(0, 0, rx, 0, Math.PI * 2); m.fill();
+  }
+
+  // 2. 模糊背景：縮小再放大（Safari 的 canvas 不一定支援 filter）
+  const small = document.createElement("canvas");
+  small.width = Math.max(1, Math.round(W / 14)); small.height = Math.max(1, Math.round(H / 14));
+  const sctx = small.getContext("2d"); sctx.imageSmoothingQuality = "high";
+  sctx.drawImage(src, 0, 0, small.width, small.height);
+  const out = document.createElement("canvas"); out.width = W; out.height = H;
+  const octx = out.getContext("2d"); octx.imageSmoothingQuality = "high";
+  octx.drawImage(small, 0, 0, W, H);
+
+  // 3. 清晰的主角疊回去
+  const sharp = document.createElement("canvas"); sharp.width = W; sharp.height = H;
+  const shctx = sharp.getContext("2d");
+  shctx.drawImage(src, 0, 0);
+  shctx.globalCompositeOperation = "destination-in";
+  shctx.imageSmoothingQuality = "high";
+  shctx.drawImage(mask, 0, 0, W, H);
+  octx.drawImage(sharp, 0, 0);
+  return out;
+}
+
+/* ---------- 像素分析：消失點、對稱、地平線、亮度 ---------- */
 const probe = document.createElement("canvas");
 const pctx = probe.getContext("2d", { willReadFrequently: true });
-let pix = null;   // 最近一次的像素分析結果
 
 function analyzePixels() {
-  const W = 48, H = Math.round(48 * video.videoHeight / video.videoWidth);
+  const W = 64, H = Math.round(64 * video.videoHeight / video.videoWidth);
   probe.width = W; probe.height = H;
   pctx.drawImage(video, 0, 0, W, H);
   const d = pctx.getImageData(0, 0, W, H).data;
@@ -483,74 +630,91 @@ function analyzePixels() {
   for (let i = 0; i < W * H; i++) { L[i] = (d[i*4] * .3 + d[i*4+1] * .59 + d[i*4+2] * .11) / 255; mean += L[i]; }
   mean /= W * H;
 
-  // 顯著度 = 與整體亮度的差 + 邊緣強度
-  const sal = new Float32Array(W * H), edge = new Float32Array(W * H);
-  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
-    const i = y * W + x;
-    edge[i] = Math.abs(L[i+1] - L[i-1]) + Math.abs(L[i+W] - L[i-W]);
-    sal[i] = Math.abs(L[i] - mean) * .6 + edge[i];
-  }
-  const sorted = Array.from(sal).sort((a, b) => a - b), cut = sorted[Math.floor(sorted.length * .85)];
-  const xs = [], ys = [];
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (sal[y*W+x] >= cut) { xs.push(x); ys.push(y); }
-  const pct = (a, q) => { a.sort((m, n) => m - n); return a[Math.floor((a.length - 1) * q)]; };
-  const subject = xs.length > 10 ? { x: pct(xs, .15) / W, y: pct(ys, .15) / H,
-    w: (pct(xs, .85) - pct(xs, .15) + 1) / W, h: (pct(ys, .85) - pct(ys, .15) + 1) / H } : null;
+  // 每列平均亮度
+  const row = [];
+  for (let y = 0; y < H; y++) { let t = 0; for (let x = 0; x < W; x++) t += L[y*W+x]; row.push(t / W); }
+  const avg = (a, b) => { let t = 0; for (let y = a; y < b; y++) t += row[y]; return t / (b - a); };
 
   // 地平線：上方明顯比下方亮的那一列（天空 vs 地面）
-  const row = []; for (let y = 0; y < H; y++) { let t = 0; for (let x = 0; x < W; x++) t += L[y*W+x]; row.push(t / W); }
   let horizon = null, bestDiff = .08;
   for (let y = Math.floor(H * .15); y < H * .85; y++) {
     const up = (row[y-3] + row[y-2] + row[y-1]) / 3, down = (row[y] + row[y+1] + row[y+2]) / 3;
     if (up - down > bestDiff) { bestDiff = up - down; horizon = y / H; }
   }
 
-  // 邊緣雜亂度、主體亮度
+  // 消失點：沿著每條斜向邊緣延伸投票，最多線交會的地方
+  const AW = 24, AH = Math.round(24 * H / W), acc = new Float32Array(AW * AH);
+  let total = 0;
+  for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x++) {
+    const i = y * W + x, gx = L[i+1] - L[i-1], gy = L[i+W] - L[i-W], m = Math.hypot(gx, gy);
+    if (m < .1) continue;
+    let ux = -gy / m, uy = gx / m;                       // 邊緣方向（垂直於梯度）
+    const ang = Math.abs(Math.atan2(uy, ux)) * 180 / Math.PI, a = ang > 90 ? 180 - ang : ang;
+    if (a < 10 || a > 80) continue;                      // 水平、垂直線不代表透視
+    total += m;
+    const px0 = x / W, py0 = y / H, len = Math.hypot(ux / W, uy / H);
+    ux = ux / W / len; uy = uy / H / len;
+    for (let t = -1.4; t <= 1.4; t += .035) {
+      if (Math.abs(t) < .12) continue;                   // 不投給自己附近
+      const X = px0 + t * ux, Y = py0 + t * uy;
+      if (X < 0 || X >= 1 || Y < 0 || Y >= 1) continue;
+      acc[Math.floor(Y * AH) * AW + Math.floor(X * AW)] += m;
+    }
+  }
+  let vp = null;
+  if (total > 3) {
+    let bestV = 0, bx = 0, by = 0;
+    for (let y = 1; y < AH - 1; y++) for (let x = 1; x < AW - 1; x++) {
+      let v = 0; for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) v += acc[(y+j)*AW + x+k];
+      if (v > bestV) { bestV = v; bx = x; by = y; }
+    }
+    const strength = bestV / (total * 3);
+    if (strength > .12) vp = { x: (bx + .5) / AW, y: (by + .5) / AH, strength };
+  }
+
+  // 左右對稱：找最對稱的中線
+  let sym = 0, symAxis = null, texture = 0;
+  for (let i = 0; i < W * H - 1; i++) texture += Math.abs(L[i+1] - L[i]);
+  texture /= W * H;
+  if (texture > .02) {
+    for (let a = .35; a <= .65; a += .025) {
+      const ax = a * W, span = Math.floor(Math.min(ax, W - ax));
+      if (span < 10) continue;
+      let diff = 0, n = 0;
+      for (let y = 0; y < H; y += 2) for (let k = 1; k < span; k++) {
+        diff += Math.abs(L[y*W + Math.floor(ax - k)] - L[y*W + Math.min(W - 1, Math.floor(ax + k))]); n++;
+      }
+      const s = Math.max(0, 1 - (diff / n) * 6);
+      if (s > sym) { sym = s; symAxis = a; }
+    }
+  }
+
+  // 框中框：四周比中間暗很多（門、窗、拱門）
   let border = 0, nb = 0, inner = 0, ni = 0;
-  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
-    const e = edge[y*W+x], isB = x < W * .15 || x > W * .85 || y < H * .12 || y > H * .88;
-    if (isB) { border += e; nb++; } else { inner += e; ni++; }
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const isB = x < W * .15 || x > W * .85 || y < H * .12 || y > H * .88;
+    if (isB) { border += L[y*W+x]; nb++; } else { inner += L[y*W+x]; ni++; }
   }
-  const topLum = row.slice(0, Math.floor(H / 3)).reduce((a, b) => a + b, 0) / Math.floor(H / 3);
-  const midLum = row.slice(Math.floor(H / 3), Math.floor(H * 2 / 3)).reduce((a, b) => a + b, 0) / (Math.floor(H * 2 / 3) - Math.floor(H / 3));
-  pix = { subject, horizon, mean, clutter: border / nb / (inner / ni + 1e-3), backlit: topLum - midLum > .3 };
-  return pix;
-}
+  const frameDark = inner / ni - border / nb;
 
-/* 風景構圖：地平線放三分線、主體放三分點 */
-function landscapeSuggest(p) {
-  const out = [], s = .82;
-  const cx = p.subject ? p.subject.x + p.subject.w / 2 : .5;
-  const tx = cx < .5 ? 1/3 : 2/3;
-  const crop = ty => ({ x: Math.min(Math.max(cx - tx * s, 0), 1 - s), y: Math.min(Math.max(p.horizon - ty * s, 0), 1 - s), w: s, h: s });
-  if (p.horizon != null) {
-    out.push({ id: 10, title: "天空多一點", tip: "地平線放下三分線，適合天空漂亮時", rect: crop(2/3) });
-    out.push({ id: 11, title: "地面多一點", tip: "地平線放上三分線，突顯前景與建築", rect: crop(1/3) });
-  }
-  if (p.subject && area(p.subject) < .5) {
-    const r = best(p.subject, [.9, .8, .7], THIRDS, .15);
-    if (r) out.push({ id: 12, title: "焦點三分", tip: "把最吸睛的地方放到三分點", rect: r });
-  }
-  return out.filter((x, i) => !out.slice(0, i).some(o => iou(o.rect, x.rect) > .85));
+  const third = Math.floor(H / 3);
+  return {
+    mean, horizon, vp, sym, symAxis, frameDark,
+    skyBright: avg(0, third) > .6,
+    backlit: avg(0, third) - avg(third, third * 2) > .3,
+  };
 }
-
 
 /* ---------- 工具 ---------- */
 function area(r) { return r.w * r.h; }
 function center(r) { return { x: r.x + r.w / 2, y: r.y + r.h / 2 }; }
 function contains(r, p) { return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h; }
 function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
-function union(rs) {
-  const x1 = Math.min(...rs.map(r => r.x)), y1 = Math.min(...rs.map(r => r.y));
-  const x2 = Math.max(...rs.map(r => r.x + r.w)), y2 = Math.max(...rs.map(r => r.y + r.h));
-  return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
-}
 function intersect(a, b) {
   const x = Math.max(a.x, b.x), y = Math.max(a.y, b.y);
   const w = Math.min(a.x + a.w, b.x + b.w) - x, h = Math.min(a.y + a.h, b.y + b.h) - y;
   return w > 0 && h > 0 ? { x, y, w, h } : null;
 }
-function iou(a, b) { const i = intersect(a, b); return i ? area(i) / (area(a) + area(b) - area(i)) : 0; }
 function clamp01(r) { return intersect(r, { x: 0, y: 0, w: 1, h: 1 }); }
 </script>
 </body>
