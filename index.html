@@ -203,8 +203,8 @@ let feat = null;                     // 最近一次的畫面特徵
 let ranked = [];                     // 符合的範本（分數高到低）
 let active = null;                   // 目前套用的範本
 let manualId = null;
-let pendingCue = null;                 // 使用者手動指定的範本
-let pendingId = null, pendingCount = 0;
+let pendingCue = null;
+let dispBox = null, showCandsUntil = 0;                 // 使用者手動指定的範本
 let filterId = null;                 // null = 跟著範本推薦
 let showFilters = false;
 let bokehOn = true;
@@ -221,7 +221,7 @@ $("startBtn").onclick = async () => {
       try { await DeviceMotionEvent.requestPermission(); } catch {}
     }
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1440 } }, audio: false });
+      video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 960 } }, audio: false });
     video.srcObject = stream;
     const track = stream.getVideoTracks()[0], cap = track.getCapabilities?.() || {};
     if (cap.zoom) hwZoom = { track, min: Math.max(cap.zoom.min, 1), max: Math.min(cap.zoom.max, 10) };
@@ -239,10 +239,10 @@ $("startBtn").onclick = async () => {
 async function loadModels() {
   visionFiles = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
   objDet = await ObjectDetector.createFromOptions(visionFiles, {
-    baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite", delegate: "GPU" },
+    baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite", delegate: "CPU" },
     scoreThreshold: 0.35, runningMode: "VIDEO" });
   faceDet = await FaceDetector.createFromOptions(visionFiles, {
-    baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite", delegate: "GPU" },
+    baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite", delegate: "CPU" },
     runningMode: "VIDEO" });
 }
 
@@ -289,10 +289,12 @@ function loop(t) {
   if (dims !== lastDims) { lastDims = dims; layout(); }
   if (objDet && faceDet && t - lastRun > 500 && video.readyState >= 2) {
     lastRun = t;
-    analyze(t);
+    try { analyze(t); } catch (e) { console.warn(e); }   // 分析出錯也不能讓畫面停住
   }
-  if (preview && video.readyState >= 2) preview.render(video, currentFilter());
-  draw();
+  try {
+    if (preview && video.readyState >= 2) preview.render(video, currentFilter());
+    draw();
+  } catch (e) { console.warn(e); }
   requestAnimationFrame(loop);
 }
 
@@ -364,45 +366,53 @@ function analyze(t) {
   renderTop();
 }
 
-/* ---------- 範本選擇（穩定版） ---------- */
-const ema = {};                 // 每個範本的平滑分數
-let activeSince = 0;            // 目前範本從什麼時候開始
+/* ---------- 範本選擇：判斷一次就固定 ---------- */
+// 自動模式流程：先觀察約 1.5 秒選出範本 → 固定 → 只有畫面明顯換了（換場景）才重新判斷
+const ema = {};
+let observeTicks = 0;           // 已經觀察幾次
+let sceneRef = null;            // 固定範本時的畫面縮圖
+let changeTicks = 0;            // 畫面跟固定時不一樣，持續了幾次
 function chooseTemplate() {
-  const raw = rankTemplates(feat), now = performance.now();
+  const raw = rankTemplates(feat);
   for (const t of TEMPLATES) {
     const sc = raw.find(r => r.t === t)?.score || 0;
-    ema[t.id] = (ema[t.id] ?? sc) * .8 + sc * .2;          // 慢慢跟上，不會因為一兩格誤判就變
+    ema[t.id] = (ema[t.id] ?? sc) * .7 + sc * .3;
   }
   ranked = TEMPLATES.map(t => ({ t, score: ema[t.id] })).filter(r => r.score > .2).sort((a, b) => b.score - a.score);
 
   let next = active;
   if (manualId) next = TEMPLATES.find(t => t.id === manualId);
-  else {
-    const top = ranked[0]?.t || null;
-    const cur = active ? ema[active.id] : 0;
-    if (!active) next = top;
-    else if (cur < .15) next = top;                          // 目前的範本已經完全不符合
-    else if (top && top !== active && now - activeSince > 4000 && ema[top.id] > cur + .15) {
-      if (pendingId === top.id) pendingCount++; else { pendingId = top.id; pendingCount = 1; }
-      if (pendingCount >= 5) next = top;                     // 明顯勝出且持續約 2.5 秒才換
-    } else pendingId = null;
+  else if (!active) {
+    if (++observeTicks >= 3) { next = ranked[0]?.t || null; sceneRef = feat.thumb; }
+  } else {
+    // 已固定：比對畫面是否換了場景
+    changeTicks = thumbDiff(sceneRef, feat.thumb) > .13 ? changeTicks + 1 : 0;
+    if (changeTicks >= 4) {                                // 換場景持續約 2 秒 → 重新判斷
+      next = null; observeTicks = 0; changeTicks = 0;
+      for (const k in ema) delete ema[k];
+    }
   }
   if (next !== active) {
     active = next;
-    activeSince = now;
-    pendingId = null;
-    if (!filterId) flashFilterName();                     // 跟著範本換推薦濾鏡
+    if (active && !filterId) flashFilterName();
   }
   renderChips();
+}
+function thumbDiff(a, b) {
+  if (!a || !b || a.length !== b.length) return 1;
+  let d = 0; for (let i = 0; i < a.length; i++) d += Math.abs(a[i] - b[i]);
+  return d / a.length;
 }
 
 function renderTop() {
   $("bokehBtn").hidden = !active?.bokeh;
   if (!active) {
-    $("scene").innerHTML = `<b>範本：一般</b><small>對準人、長廊、建築、風景或美食試試</small>`;
+    const html = !manualId && observeTicks < 3 ? `<b>判斷中…</b><small>拿穩手機一下下</small>`
+      : `<b>範本：一般</b><small>對準人、長廊、建築、風景或美食試試</small>`;
+    if ($("scene").innerHTML !== html) $("scene").innerHTML = html;
     return;
   }
-  const mode = manualId ? "指定" : "自動";
+  const mode = manualId ? "指定範本" : "自動・已固定，換場景才重新判斷";
   const html = `<b>${active.name}</b><small>${mode}・點主角可鎖定・雙指縮放</small>` +
     `<span class="steps">${active.steps.map((s, i) => `${i + 1}. ${s}`).join("　")}</span>`;
   if ($("scene").innerHTML !== html) $("scene").innerHTML = html;
@@ -476,6 +486,7 @@ $("stage").addEventListener("touchend", e => {
 });
 function pickTemplate(id) {
   manualId = id;
+  if (!id) { active = null; observeTicks = 0; for (const k in ema) delete ema[k]; }   // 點「自動」= 重新判斷
   const t = TEMPLATES.find(x => x.id === id);
   if (t?.zoom && hwZoom) setZoom(t.zoom);
   if (feat) { chooseTemplate(); cue = computeCue(feat, active); renderTop(); }
@@ -544,10 +555,13 @@ function draw() {
 
   // 其他可選的人或物：淡淡的細框，點了就鎖定
   ctx.strokeStyle = "rgba(255,255,255,.45)"; ctx.lineWidth = 1 * d; ctx.setLineDash([3 * d, 3 * d]);
-  for (const c of allCands) if (c !== mainCand) { const r = px(c.face ? c.face.box : c.box); ctx.strokeRect(r.x, r.y, r.w, r.h); }
+  if (performance.now() < showCandsUntil) for (const c of allCands) if (c !== mainCand) { const r = px(c.face ? c.face.box : c.box); ctx.strokeRect(r.x, r.y, r.w, r.h); }
   ctx.setLineDash([]);
   if (mainCand) {
-    const r = px(mainCand.face ? mainCand.face.box : mainCand.box), L = Math.min(r.w, r.h) * .25;
+    const tb = mainCand.face ? mainCand.face.box : mainCand.box;
+    if (!dispBox || dist(center(dispBox), center(tb)) > .3) dispBox = { ...tb };
+    else for (const k of ["x", "y", "w", "h"]) dispBox[k] += (tb[k] - dispBox[k]) * .2;   // 主角框平滑移動
+    const r = px(dispBox), L = Math.min(r.w, r.h) * .25;
     ctx.strokeStyle = "#ffd60a"; ctx.lineWidth = 3 * d; ctx.beginPath();
     for (const [cx, cy, sx, sy] of [[r.x, r.y, 1, 1], [r.x + r.w, r.y, -1, 1], [r.x, r.y + r.h, 1, -1], [r.x + r.w, r.y + r.h, -1, -1]]) {
       ctx.moveTo(cx, cy + sy * L); ctx.lineTo(cx, cy); ctx.lineTo(cx + sx * L, cy);
@@ -662,6 +676,7 @@ overlay.addEventListener("click", e => {
   const boxOf = c => c.face ? c.face.box : c.box;
   const hit = allCands.filter(c => contains(boxOf(c), pt) || contains(c.box, pt))
     .sort((a, b) => area(boxOf(a)) - area(boxOf(b)))[0];   // 重疊時選比較小的那個
+  showCandsUntil = performance.now() + 3000;              // 點畫面時才顯示其他可選的人或物
   if (lock && hit === mainCand) lock = null;               // 點已鎖定的主角 = 解除
   else if (hit) { lock = { cand: hit, face: !!hit.face, miss: 0 }; mainCand = hit; }
 });
@@ -721,7 +736,7 @@ async function applyBokeh(src, subject, isPerson) {
   const mask = document.createElement("canvas");
   if (isPerson) {
     if (!segmenter) segmenter = await ImageSegmenter.createFromOptions(visionFiles, {
-      baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite", delegate: "GPU" },
+      baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite", delegate: "CPU" },
       runningMode: "IMAGE", outputConfidenceMasks: true, outputCategoryMask: false });
     const res = segmenter.segment(src);
     const m = res.confidenceMasks[0], data = m.getAsFloat32Array();
@@ -854,7 +869,11 @@ function analyzePixels() {
   const frameDark = inner / ni - border / nb;
 
   const third = Math.floor(H / 3);
+  const thumb = new Float32Array(16 * 12);     // 小縮圖，用來判斷是否換了場景
+  for (let ty = 0; ty < 12; ty++) for (let tx = 0; tx < 16; tx++)
+    thumb[ty * 16 + tx] = L[Math.floor((ty + .5) * H / 12) * W + Math.floor((tx + .5) * W / 16)];
   return {
+    thumb,
     mean, horizon, vp, sym, symAxis, frameDark,
     skyBright: avg(0, third) > .6,
     backlit: avg(0, third) - avg(third, third * 2) > .3,
