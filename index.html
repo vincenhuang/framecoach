@@ -30,7 +30,7 @@
   #stage { flex: 1; position: relative; display: flex; align-items: center; justify-content: center; min-height: 0; }
   #frame { position: relative; max-width: 100%; max-height: 100%; }
   #video, #overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
-  #video { object-fit: cover; }
+  #video { object-fit: fill; }
 
   #top { position: absolute; top: 10px; left: 16px; right: 16px; display: flex; gap: 8px; align-items: flex-start; z-index: 2; }
   #scene { background: var(--glass); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
@@ -152,8 +152,8 @@ $("startBtn").onclick = async () => {
   $("startMsg").textContent = "載入中…";
   try {
     // iOS 需要使用者點擊後才能讀取陀螺儀
-    if (window.DeviceOrientationEvent?.requestPermission) {
-      try { await DeviceOrientationEvent.requestPermission(); } catch {}
+    if (window.DeviceMotionEvent?.requestPermission) {
+      try { await DeviceMotionEvent.requestPermission(); } catch {}
     }
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1440 } }, audio: false });
@@ -162,7 +162,7 @@ $("startBtn").onclick = async () => {
     layout();
     $("startSheet").hidden = true;
     loadModels();
-    window.addEventListener("deviceorientation", onOrientation);
+    window.addEventListener("devicemotion", onMotion);
     requestAnimationFrame(loop);
   } catch (e) {
     $("startMsg").textContent = "無法開啟相機：" + e.message + "。請在 Safari 設定允許相機。";
@@ -193,14 +193,21 @@ window.addEventListener("resize", layout);
 video.addEventListener("loadedmetadata", layout);
 
 /* ---------- 水平 ---------- */
-function onOrientation(e) {
-  // 直拿手機時，gamma 是左右傾斜
-  if (e.gamma == null || Math.abs(e.beta) < 30) { tiltDeg = null; return; }
-  tiltDeg = Math.abs(e.gamma) > 2 && Math.abs(e.gamma) < 35 ? e.gamma : null;
+// 用重力方向計算手機左右傾斜（直拿時最準）
+function onMotion(e) {
+  const g = e.accelerationIncludingGravity;
+  if (!g || g.x == null) return;
+  // 手機接近平放時不判斷（例如俯拍美食）
+  if (Math.abs(g.z) > Math.hypot(g.x, g.y)) { tiltDeg = null; return; }
+  const deg = Math.atan2(g.x, Math.abs(g.y)) * 180 / Math.PI;
+  tiltDeg = Math.abs(deg) > 3 && Math.abs(deg) < 35 ? deg : null;
 }
 
 /* ---------- 分析迴圈 ---------- */
+let lastDims = "";
 function loop(t) {
+  const dims = `${video.videoWidth}x${video.videoHeight}x${innerWidth}x${innerHeight}`;
+  if (dims !== lastDims) { lastDims = dims; layout(); }
   if (objDet && faceDet && t - lastRun > 300 && video.readyState >= 2) {
     lastRun = t;
     analyze(t);
