@@ -48,7 +48,17 @@
   #video { object-fit: fill; opacity: 0; }
   #view { transform-origin: 50% 50%; }
 
-  #top { position: absolute; top: 10px; left: 16px; right: 16px; display: flex; gap: 8px; align-items: flex-start; z-index: 2; }
+  #top { position: absolute; top: 10px; left: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 2; }
+  #refImg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; opacity: .4; }
+  #refBar { display: flex; align-items: center; gap: 10px; background: var(--glass); border-radius: 12px; padding: 6px 10px;
+    font-size: 12px; align-self: flex-start; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+  #refBar input { width: 110px; accent-color: var(--guide); touch-action: pan-x; }
+  #refBar button { font-size: 16px; padding: 0 4px; }
+  .refPick { width: 100%; max-width: 560px; display: flex; gap: 12px; align-items: center; text-align: left;
+    background: var(--guide); color: #000; border-radius: 14px; padding: 12px 14px; }
+  .refPick b { display: block; font-size: 15px; }
+  .refPick span { font-size: 12px; }
+  .refPick i { font-style: normal; font-size: 26px; }
   #scene { background: var(--glass); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
     border-radius: 12px; padding: 8px 12px; flex: 1; min-width: 0; }
   #scene b { font-size: 16px; }
@@ -90,8 +100,8 @@
   #shutter.busy { opacity: .5; }
   #tplBtn { width: 54px; height: 54px; border-radius: 12px; background: var(--chip); display: flex; flex-direction: column;
     align-items: center; justify-content: center; font-size: 11px; gap: 2px; }
-  #tools { display: flex; gap: 8px; }
-  #tools button { width: 54px; height: 54px; border-radius: 12px; background: var(--chip); display: flex; flex-direction: column;
+  #tools { display: flex; gap: 6px; }
+  #tools button { width: 46px; height: 54px; border-radius: 12px; background: var(--chip); display: flex; flex-direction: column;
     align-items: center; justify-content: center; font-size: 11px; gap: 2px; }
   #tools button.on { background: var(--accent); color: #000; }
   #tools i { font-style: normal; font-size: 20px; line-height: 1; }
@@ -135,10 +145,12 @@
     <div id="frame">
       <video id="video" playsinline muted autoplay></video>
       <canvas id="view"></canvas>
+      <img id="refImg" alt="" hidden>
       <canvas id="overlay"></canvas>
     </div>
     <div id="top">
       <div id="scene"><b>範本：分析中…</b><small>把鏡頭對準想拍的東西</small></div>
+      <div id="refBar" hidden><span>範例透明度</span><input type="range" id="refOpacity" min="0" max="80" value="40" aria-label="範例透明度"><button id="refOff" aria-label="移除範例">✕</button></div>
     </div>
     <div id="level" hidden><i class="l"></i><i class="c"></i><i class="r"></i></div>
     <div id="flatLevel" hidden><i class="fix"></i><i class="mov"></i></div>
@@ -165,7 +177,9 @@
 
 <div class="sheet" id="gallery" hidden>
   <header><h1>拍攝範本</h1><button class="btn ghost" id="galleryClose">關閉</button></header>
-  <p>App 會自動判斷畫面適合哪個範本，也可以在這裡直接指定。</p>
+  <button class="refPick" id="refPick"><i>⧉</i><div><b>仿拍一張照片</b><span>從相簿選一張喜歡的照片，App 教你拍出一樣的構圖</span></div></button>
+  <input type="file" id="refFile" accept="image/*" hidden>
+  <p>也可以直接指定範本：</p>
   <div id="tplGrid"></div>
 </div>
 
@@ -303,8 +317,8 @@ function lightTick() {
   if (mainCand) track();
   feat = buildFeat(p);
   if (manualId) active = TEMPLATES.find(t => t.id === manualId);
-  if (mainCand || manualId) {
-    const next = computeCue(feat, active);
+  if (mainCand || manualId || ref) {
+    const next = ref ? refCue(feat) : computeCue(feat, active);
     if (!cue || next.t === cue.t || next.t === pendingCue) cue = next;   // 新提示要連續出現 2 次才換
     pendingCue = next.t;
   } else cue = null;
@@ -475,7 +489,9 @@ function showHint(text) {
 function renderTop() {
   $("bokehBtn").hidden = !active?.bokeh;
   let html;
-  if (identifying) html = `<b>辨識中…</b><small>拿穩手機一下下</small>`;
+  if (ref && !identifying) html = ref.analyzing ? `<b>分析範例照片中…</b><small>找出範例的主角和構圖</small>`
+    : `<b>仿拍範例</b><small>${ref.subject ? (mainCand ? "把你的主角移到藍框裡，大小也要一樣" : "點一下畫面中你的主角，開始對齊") : "對齊範例的地平線和線條"}</small>`;
+  else if (identifying) html = `<b>辨識中…</b><small>拿穩手機一下下</small>`;
   else if (!mainCand && !manualId) html = `<b>點一下你要拍的主角</b><small>人、物品、建築或任何景物都可以・雙指縮放</small>`;
   else if (!active) html = `<b>範本：一般</b><small>已鎖定主角・點主角可解除</small>`;
   else {
@@ -575,6 +591,103 @@ $("tplGrid").onclick = e => {
   $("gallery").hidden = true;
 };
 
+/* ---------- 仿拍：疊上範例照片，引導拍出一樣的構圖 ---------- */
+let ref = null;   // { subject, faceLike, horizon, vp, analyzing }
+$("refPick").onclick = () => $("refFile").click();
+$("refFile").onchange = async e => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  $("gallery").hidden = true;
+  const img = $("refImg");
+  if (img.src) URL.revokeObjectURL(img.src);
+  img.src = URL.createObjectURL(file);
+  try { await img.decode(); } catch { showHint("這張照片打不開，換一張試試"); return; }
+  img.hidden = false;
+  $("refBar").hidden = false;
+  ref = { analyzing: true };
+  renderTop();
+  try { ref = await analyzeRef(img); } catch (err) { console.warn(err); ref = { subject: null }; }
+  if (!ref.subject && ref.horizon == null && !ref.vp) showHint("範例裡找不到明確的主角，就照著半透明範例對齊吧");
+  renderTop();
+};
+$("refOpacity").oninput = e => $("refImg").style.opacity = e.target.value / 100;
+$("refOff").onclick = () => {
+  ref = null;
+  $("refImg").hidden = true;
+  $("refBar").hidden = true;
+  cue = null;
+  renderTop();
+};
+
+async function analyzeRef(img) {
+  while (!objDet || !faceDet) await new Promise(r => setTimeout(r, 200));   // 等模型載入
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  const c = document.createElement("canvas");
+  c.width = 384; c.height = Math.round(384 * ih / iw);
+  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+  const ts = performance.now();
+  const norm = b => ({ x: b.originX / c.width, y: b.originY / c.height, w: b.width / c.width, h: b.height / c.height });
+  const faces = faceDet.detectForVideo(c, ts).detections.map(d => norm(d.boundingBox));
+  const objs = objDet.detectForVideo(c, ts + 1).detections
+    .filter(d => d.categories[0].categoryName !== "dining table")
+    .map(d => ({ box: norm(d.boundingBox), score: d.categories[0].score }));
+  const p = analyzePixels(c, c.width, c.height);
+
+  // 範例和相機畫面的比例可能不同（例如 9:16 對 3:4），換算成畫面上看到的位置
+  const fa = video.videoWidth / video.videoHeight, ia = iw / ih;
+  const fx = ia > fa ? fa / ia : 1, fy = ia > fa ? 1 : ia / fa;
+  const mp = q => ({ x: (q.x - (1 - fx) / 2) / fx, y: (q.y - (1 - fy) / 2) / fy });
+  const mb = b => ({ ...mp(b), w: b.w / fx, h: b.h / fy });
+
+  let subject = null, faceLike = false;
+  if (faces.length) { subject = mb(faces.reduce((a, b) => area(b) > area(a) ? b : a)); faceLike = true; }
+  else if (objs.length) subject = mb(objs.reduce((a, b) => area(b.box) * b.score > area(a.box) * a.score ? b : a).box);
+  return {
+    subject, faceLike,
+    horizon: p.horizon != null ? mp({ x: .5, y: p.horizon }).y : null,
+    vp: p.vp ? mp(p.vp) : null,
+  };
+}
+
+function refCue(f) {
+  if (ref.analyzing) return { t: "分析範例中…" };
+  if (tiltDeg !== null && !f.flat) return { t: "↻ 對齊水平線" };
+  if (ref.subject) {
+    if (!mainCand) return { t: "👆 點一下你的主角" };
+    // 範例是臉就比對臉，是物品就比對物品框
+    const cur = ref.faceLike && mainCand.face ? mainCand.face.box : mainCand.box;
+    const c = moveCue(center(cur), center(ref.subject), .05);
+    if (c) return c;
+    const ratio = cur.h / ref.subject.h;
+    if (ratio < .8) return { t: "⊕ 靠近一點" };
+    if (ratio > 1.25) return { t: "⊖ 退後一點" };
+  } else {
+    if (ref.vp && f.vp) { const c = moveCue(f.vp, ref.vp, .06); if (c) return c; }
+    if (ref.horizon != null && f.horizon != null) { const c = moveCue({ y: f.horizon }, { y: ref.horizon }, .05); if (c) return c; }
+  }
+  return { t: "✓ 跟範例一樣了", ok: true };
+}
+
+function drawRef(W, H, d) {
+  if (ref.analyzing) return;
+  ctx.save();
+  ctx.strokeStyle = GUIDE; ctx.fillStyle = GUIDE; ctx.lineWidth = 2.5 * d; ctx.setLineDash([8 * d, 6 * d]);
+  ctx.font = `700 ${12 * d}px -apple-system, sans-serif`;
+  if (ref.subject) {
+    const r = px(ref.subject);
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.fillText("範例的主角在這", r.x, Math.min(H - 6 * d, r.y + r.h + 16 * d));
+  } else {
+    if (ref.horizon != null) {
+      ctx.beginPath(); ctx.moveTo(0, ref.horizon * H); ctx.lineTo(W, ref.horizon * H); ctx.stroke();
+      ctx.fillText("範例的地平線", 8 * d, ref.horizon * H - 6 * d);
+    }
+    if (ref.vp) { ctx.beginPath(); ctx.arc(ref.vp.x * W, ref.vp.y * H, 18 * d, 0, Math.PI * 2); ctx.stroke(); }
+  }
+  ctx.restore();
+}
+
 /* ---------- 引導：一次只給一個最重要的提示 ---------- */
 // cur 是東西現在的位置，tgt 是範本要它在的位置。東西偏右 → 手機往右轉，它就會往中間移
 function moveCue(cur, tgt, tol = .06) {
@@ -621,7 +734,8 @@ function draw() {
   ctx.clearRect(0, 0, W, H);
 
   // 範本的目標位置（藍色虛線）
-  if (active && feat) drawTarget(active.target(feat), W, H, d);
+  if (ref) drawRef(W, H, d);
+  else if (active && feat) drawTarget(active.target(feat), W, H, d);
 
   if (mainCand) {
     const tb = mainCand.face ? mainCand.face.box : mainCand.box;
@@ -858,10 +972,10 @@ async function applyBokeh(src, subject, isPerson) {
 const probe = document.createElement("canvas");
 const pctx = probe.getContext("2d", { willReadFrequently: true });
 
-function analyzePixels() {
-  const W = 64, H = Math.round(64 * video.videoHeight / video.videoWidth);
+function analyzePixels(src = video, sw = video.videoWidth, sh = video.videoHeight) {
+  const W = 64, H = Math.round(64 * sh / sw);
   probe.width = W; probe.height = H;
-  pctx.drawImage(video, 0, 0, W, H);
+  pctx.drawImage(src, 0, 0, W, H);
   const d = pctx.getImageData(0, 0, W, H).data;
   const L = new Float32Array(W * H);
   let mean = 0;
